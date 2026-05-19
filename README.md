@@ -61,6 +61,12 @@ To list presets:
 uv run cafe-scout --list-presets
 ```
 
+To delete a saved preset directly:
+
+```bash
+uv run cafe-scout --delete-preset frontend-berlin
+```
+
 To run a specific preset directly:
 
 ```bash
@@ -90,6 +96,8 @@ uv run cafe-scout --config search.json --no-interactive
 ```
 
 Saved presets are separate from `--config` files. Presets live in `presets/*.json` and are available from startup selection or with `--preset <slug>`.
+
+Saved presets can also be deleted either from the interactive startup flow or with `--delete-preset <slug>`.
 
 When you save a preset from the interactive wizard, it stores the full resolved config, including selected filters and output file paths like `markdown_output` and `json_output`.
 

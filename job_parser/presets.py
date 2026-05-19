@@ -123,3 +123,11 @@ def save_preset(
 def slugify_preset_name(name: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", name.strip().casefold()).strip("-")
     return slug or "preset"
+
+
+def delete_saved_preset(slug: str, directory: str | Path = PRESETS_DIR) -> bool:
+    path = Path(directory) / f"{slug}.json"
+    if not path.exists():
+        return False
+    path.unlink()
+    return True

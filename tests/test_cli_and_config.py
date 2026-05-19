@@ -16,6 +16,7 @@ from job_parser.config import (
 )
 from job_parser.presets import (
     DEFAULT_PRESET_SLUG,
+    delete_saved_preset,
     get_builtin_preset,
     get_default_config,
     list_all_presets,
@@ -214,6 +215,21 @@ class PresetRegistryTests(unittest.TestCase):
 
     def test_slugify_preset_name_normalizes_filename(self):
         self.assertEqual(slugify_preset_name("  My Frontend Preset  "), "my-frontend-preset")
+
+    def test_delete_saved_preset_removes_file(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_preset(
+                name="Temporary Preset",
+                description="To be deleted",
+                config=SearchConfig(keywords=["Python"]),
+                directory=temp_dir,
+            )
+
+            deleted = delete_saved_preset("temporary-preset", temp_dir)
+            presets = list_saved_presets(temp_dir)
+
+        self.assertTrue(deleted)
+        self.assertNotIn("temporary-preset", presets)
 
 
 class SearchStateTests(unittest.TestCase):

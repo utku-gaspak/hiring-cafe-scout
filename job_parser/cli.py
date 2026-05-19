@@ -8,6 +8,7 @@ from job_parser.branding import print_logo
 from job_parser.config import DEFAULT_DEPARTMENTS, SearchConfig, load_search_config, save_search_config
 from job_parser.presets import (
     PRESETS_DIR,
+    delete_saved_preset,
     get_default_config,
     get_default_preset,
     list_all_presets,
@@ -23,6 +24,11 @@ def main() -> None:
     if args.list_presets:
         print_presets()
         return
+    if args.delete_preset:
+        if delete_saved_preset(args.delete_preset):
+            print(f"Deleted preset → {args.delete_preset}")
+            return
+        raise SystemExit(f"Saved preset not found: {args.delete_preset}")
 
     if args.config:
         base_config = load_search_config(args.config)
@@ -59,6 +65,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--preset", help="Load a built-in or saved preset by slug.")
     parser.add_argument("--list-presets", action="store_true", help="List available presets and exit.")
+    parser.add_argument("--delete-preset", help="Delete a saved preset by slug and exit.")
     parser.add_argument("--config", help="Load search settings from a JSON config file.")
     parser.add_argument("--save-config", help="Write the resolved search settings to a JSON config file.")
     parser.add_argument(
@@ -197,6 +204,7 @@ def resolve_interactive_start() -> SearchConfig:
                 value="builtin",
             ),
             questionary.Choice("Use saved preset", value="saved"),
+            questionary.Choice("Delete saved preset", value="delete"),
             questionary.Choice("Create new search", value="new"),
         ],
         style=style,
@@ -235,6 +243,41 @@ def resolve_interactive_start() -> SearchConfig:
             preset.name,
             style,
         )
+    if startup_choice == "delete":
+        saved_presets = list_saved_presets()
+        if not saved_presets:
+            questionary.print(
+                f"No saved presets found in `{PRESETS_DIR}/`.",
+                style="fg:#ff9e64",
+            )
+            return resolve_interactive_start()
+        preset_slug = questionary.select(
+            "Delete saved preset",
+            choices=[
+                questionary.Choice(
+                    f"{preset.name} ({preset.slug})",
+                    value=preset.slug,
+                )
+                for preset in saved_presets.values()
+            ],
+            style=style,
+            instruction="Use arrows to move, enter to continue",
+        ).ask()
+        if preset_slug is None:
+            raise SystemExit(0)
+        confirmed = questionary.select(
+            f"Delete preset `{preset_slug}`?",
+            choices=["No", "Yes"],
+            default="No",
+            style=style,
+            instruction="Use arrows to move, enter to continue",
+        ).ask()
+        if confirmed is None:
+            raise SystemExit(0)
+        if confirmed == "Yes":
+            delete_saved_preset(preset_slug)
+            questionary.print(f"Deleted preset → {preset_slug}", style="fg:#9ece6a")
+        return resolve_interactive_start()
     return collect_config(build_fresh_search_config())
 
 

@@ -1,6 +1,6 @@
 # hiring.cafe Job Scraper
 
-Scrapes [hiring.cafe](https://hiring.cafe) for junior/entry-level full-time jobs in Germany or Remote Europe matching `.NET`, `C#`, `ASP.NET`, `TypeScript`, or `React`. Results are saved to `jobs.md`, sorted by posting date (newest first).
+Scrapes [hiring.cafe](https://hiring.cafe) for junior/entry-level full-time jobs in Germany or Remote Europe matching `.NET`, `C#`, `ASP.NET`, `TypeScript`, or `React`. Results are saved to `jobs.md` and `jobs.json`, sorted by posting date (newest first).
 
 ## Setup
 
@@ -22,7 +22,7 @@ uv run python -m playwright install chromium
 uv run scraper.py
 ```
 
-Output is written to `jobs.md` in the same directory.
+Output is written to `jobs.md` and `jobs.json` in the same directory.
 
 ## How it works
 
@@ -30,7 +30,7 @@ Output is written to `jobs.md` in the same directory.
 2. Extracts job data from the page's `__NEXT_DATA__` JSON block (no separate API calls needed).
 3. Applies keyword and location filters client-side on each page's results.
 4. Skips any job already recorded in `seen_ids.txt` so re-runs only surface new postings.
-5. Saves new matches to `jobs.md` and appends their IDs to `seen_ids.txt`.
+5. Saves new matches to `jobs.md` and `jobs.json`, then appends their IDs to `seen_ids.txt`.
 
 ## Deduplication
 
@@ -49,7 +49,8 @@ Edit the top of `scraper.py` to adjust:
 | Variable | Default | Description |
 |---|---|---|
 | `KEYWORDS` | `.NET, C#, ASP.NET, TypeScript, React` | Terms matched in job title, tools, and summary |
-| `OUTPUT` | `jobs.md` | Output file path |
+| `MARKDOWN_OUTPUT` | `jobs.md` | Markdown output file path |
+| `JSON_OUTPUT` | `jobs.json` | Normalized JSON output file path |
 | `SEEN_IDS_FILE` | `seen_ids.txt` | Tracks seen job IDs across runs |
 | `MAX_PAGES` | `500` | Safety ceiling on pages scraped |
 
@@ -88,10 +89,40 @@ CITY_COORDS["Münster"] = (51.9607, 7.6261)
 
 Coordinates can be copied from Google Maps (right-click → copy coordinates).
 
-## Output format
+## Output formats
 
 ```
 1. Company — Title | Location | WorkType · Commitment | Date | hiring.cafe URL | Apply: <direct link>
+```
+
+The JSON export uses a normalized schema that is intended to be stable enough for later database ingestion:
+
+```json
+{
+  "scraped_at": "2026-05-19T12:00:00+00:00",
+  "filters": {
+    "keywords": [".NET", "React"],
+    "cities": ["Berlin"],
+    "radius_km": null,
+    "radius_city": "",
+    "max_pages": 500
+  },
+  "results": [
+    {
+      "id": "personio___company___123",
+      "title": "Software Engineer",
+      "company": "Example Co",
+      "location_display": "Berlin, Berlin, Germany",
+      "workplace_type": "Remote",
+      "commitment": "Full Time",
+      "cities": ["Berlin, Berlin, DE"],
+      "countries": ["DE"],
+      "posted_at": "2026-05-19",
+      "job_url": "https://hiring.cafe/job/...",
+      "apply_url": "https://company.com/apply/..."
+    }
+  ]
+}
 ```
 
 ## Available payload fields

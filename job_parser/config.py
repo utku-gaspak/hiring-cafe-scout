@@ -12,7 +12,8 @@ class SearchConfig:
         default_factory=lambda: [".NET", "C#", "ASP.NET", "TypeScript", "React"]
     )
     base_url: str = "https://hiring.cafe"
-    output: str = "jobs.md"
+    markdown_output: str = "jobs.md"
+    json_output: str = "jobs.json"
     seen_ids_file: str = "seen_ids.txt"
     max_pages: int | None = 500
     cities: list[str] = field(default_factory=list)
@@ -66,4 +67,3 @@ def save_seen_ids(path: str | Path, new_ids: list[str]) -> None:
     with Path(path).open("a", encoding="utf-8") as file_obj:
         for object_id in new_ids:
             file_obj.write(object_id + "\n")
-

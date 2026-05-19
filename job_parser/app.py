@@ -12,6 +12,7 @@ from job_parser.config import (
     load_seen_ids,
     save_seen_ids,
 )
+from job_parser.exporters.json import save_json
 from job_parser.exporters.markdown import save_markdown
 from job_parser.filters import (
     matches_commitment,
@@ -43,7 +44,9 @@ async def run(config: SearchConfig | None = None) -> None:
         return
 
     save_markdown(jobs, active_config)
-    print(f"\nSaved {len(jobs)} jobs → {active_config.output}")
+    save_json(jobs, active_config)
+    print(f"\nSaved {len(jobs)} jobs → {active_config.markdown_output}")
+    print(f"Saved {len(jobs)} jobs → {active_config.json_output}")
 
     new_ids = [job.object_id for job in jobs if job.object_id]
     save_seen_ids(active_config.seen_ids_file, new_ids)
@@ -151,4 +154,3 @@ async def load_page(page, url: str, retries: int = 3) -> tuple[dict | None, list
 
 def main() -> None:
     asyncio.run(run())
-

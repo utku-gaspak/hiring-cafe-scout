@@ -4,11 +4,11 @@ from datetime import datetime
 from pathlib import Path
 
 from job_parser.config import SearchConfig
-from job_parser.models import Job
+from job_parser.models import Job, sort_jobs
 
 
 def save_markdown(jobs: list[Job], config: SearchConfig) -> None:
-    jobs.sort(key=lambda job: job.date_obj, reverse=True)
+    sorted_jobs = sort_jobs(jobs)
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
 
     lines = [
@@ -19,13 +19,13 @@ def save_markdown(jobs: list[Job], config: SearchConfig) -> None:
         "**Level:** Junior / Entry  ",
         "**Commitment:** Full Time  ",
         f"**Scraped:** {now_str}  ",
-        f"**Total matches:** {len(jobs)}",
+        f"**Total matches:** {len(sorted_jobs)}",
         "",
         "---",
         "",
     ]
 
-    for index, job in enumerate(jobs, 1):
+    for index, job in enumerate(sorted_jobs, 1):
         work_details = " · ".join(filter(None, [job.work_type, job.commitment]))
         apply_suffix = f" | Apply: {job.apply_url}" if job.apply_url else ""
         lines.append(
@@ -33,5 +33,5 @@ def save_markdown(jobs: list[Job], config: SearchConfig) -> None:
             f"{work_details} | {job.posted_str} | {job.url}{apply_suffix}"
         )
 
-    Path(config.output).write_text("\n".join(lines), encoding="utf-8")
+    Path(config.markdown_output).write_text("\n".join(lines), encoding="utf-8")
 

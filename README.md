@@ -10,16 +10,29 @@ Unlike a basic scraper that just downloads listings and dumps them to a file, th
 # Install uv (if not already installed)
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Create virtual environment and install dependencies
-uv venv
-uv pip install -r requirements.txt
+# Create the environment and install project dependencies
+uv sync
+
+# Install the Playwright browser binary
 uv run python -m playwright install chromium
+```
+
+After setup, the recommended entrypoint is the packaged CLI command:
+
+```bash
+uv run cafe-scout
+```
+
+You can also run it as a module:
+
+```bash
+uv run python -m job_parser
 ```
 
 ## Usage
 
 ```bash
-uv run scraper.py
+uv run cafe-scout
 ```
 
 If run in a normal terminal, the app starts with a preset-first interactive flow:
@@ -39,25 +52,25 @@ Multi-select steps use:
 To skip the wizard and run with defaults:
 
 ```bash
-uv run scraper.py --no-interactive
+uv run cafe-scout --no-interactive
 ```
 
 To list presets:
 
 ```bash
-uv run scraper.py --list-presets
+uv run cafe-scout --list-presets
 ```
 
 To run a specific preset directly:
 
 ```bash
-uv run scraper.py --preset software-germany-junior --no-interactive
+uv run cafe-scout --preset software-germany-junior --no-interactive
 ```
 
 To run non-interactively with flags:
 
 ```bash
-uv run scraper.py \
+uv run cafe-scout \
   --no-interactive \
   --keywords ".NET,React" \
   --workplace-types "Remote,Hybrid" \
@@ -72,8 +85,8 @@ uv run scraper.py \
 To save and reuse a JSON config file:
 
 ```bash
-uv run scraper.py --no-interactive --keywords "Python,React" --save-config search.json --save-config-only
-uv run scraper.py --config search.json --no-interactive
+uv run cafe-scout --no-interactive --keywords "Python,React" --save-config search.json --save-config-only
+uv run cafe-scout --config search.json --no-interactive
 ```
 
 Saved presets are separate from `--config` files. Presets live in `presets/*.json` and are available from startup selection or with `--preset <slug>`.

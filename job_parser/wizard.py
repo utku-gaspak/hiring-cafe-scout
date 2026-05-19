@@ -341,22 +341,32 @@ def prompt_skill_selector(questionary, style, keywords: list[str], skills: list[
         return [*chosen, *remaining]
 
     def current_rows() -> list[tuple[str, str | None]]:
-        return [("next", None), *[("skill", skill) for skill in filtered_skills()]]
+        return [("back", None), ("next", None), *[("skill", skill) for skill in filtered_skills()]]
+
+    def total_pages() -> int:
+        skill_count = max(0, len(current_rows()) - 2)
+        return max(1, (skill_count + SKILL_PAGE_SIZE - 1) // SKILL_PAGE_SIZE)
+
+    def page_start_index(page_number: int) -> int:
+        if page_number <= 1:
+            return 2
+        return 2 + (page_number - 1) * SKILL_PAGE_SIZE
+
+    def current_page() -> int:
+        if cursor <= 1:
+            return 1
+        return min(((cursor - 2) // SKILL_PAGE_SIZE) + 1, total_pages())
 
     def visible_rows() -> tuple[list[tuple[str, str | None]], int, int]:
         rows = current_rows()
-        if len(rows) <= 1:
+        if len(rows) <= 2:
             return rows, 1, 1
 
-        skill_count = len(rows) - 1
-        total_pages = max(1, (skill_count + SKILL_PAGE_SIZE - 1) // SKILL_PAGE_SIZE)
-        if cursor == 0:
-            page_index = 0
-        else:
-            page_index = min((cursor - 1) // SKILL_PAGE_SIZE, total_pages - 1)
-        start = 1 + page_index * SKILL_PAGE_SIZE
+        page_count = total_pages()
+        page_index = current_page() - 1
+        start = 2 + page_index * SKILL_PAGE_SIZE
         end = min(start + SKILL_PAGE_SIZE, len(rows))
-        return [rows[0], *rows[start:end]], page_index + 1, total_pages
+        return [rows[0], rows[1], *rows[start:end]], page_index + 1, page_count
 
     def render_prompt():
         summary = selected_skill_summary()
@@ -372,7 +382,7 @@ def prompt_skill_selector(questionary, style, keywords: list[str], skills: list[
         text: list[tuple[str, str]] = [
             ("class:question", title),
             ("", "\n"),
-            ("class:instruction", "Type to filter. Use arrows to move. Press enter to toggle. Choose Next to continue."),
+            ("class:instruction", "Type to filter. Up/down move within a page. Left/right change pages. Enter toggles. Back returns to search terms."),
             ("", "\n\n"),
             ("class:text", f"Search: {query or 'all skills'}"),
             ("", "\n\n"),
@@ -392,7 +402,10 @@ def prompt_skill_selector(questionary, style, keywords: list[str], skills: list[
             marker_style = "class:pointer" if is_active else "class:text"
             label_style = "class:highlighted" if is_active else "class:text"
             pointer = "» " if is_active else "  "
-            if row_type == "next":
+            if row_type == "back":
+                marker = "←"
+                label = "Back"
+            elif row_type == "next":
                 marker = "→"
                 label = "Next"
             else:
@@ -424,12 +437,58 @@ def prompt_skill_selector(questionary, style, keywords: list[str], skills: list[
     @bindings.add("up")
     def _move_up(event) -> None:
         nonlocal cursor
-        cursor = max(0, cursor - 1)
+        if cursor <= 2:
+            cursor = max(0, cursor - 1)
+            return
+        page = current_page()
+        start = page_start_index(page)
+        if cursor > start:
+            cursor -= 1
 
     @bindings.add("down")
     def _move_down(event) -> None:
         nonlocal cursor
-        cursor = min(len(current_rows()) - 1, cursor + 1)
+        rows = current_rows()
+        if cursor == 0:
+            cursor = min(1, len(rows) - 1)
+            return
+        if cursor == 1:
+            cursor = min(2, len(rows) - 1)
+            return
+        page = current_page()
+        start = page_start_index(page)
+        end = min(start + SKILL_PAGE_SIZE - 1, len(rows) - 1)
+        if cursor < end:
+            cursor += 1
+
+    @bindings.add("left")
+    def _page_left(event) -> None:
+        nonlocal cursor
+        if cursor <= 1:
+            return
+        page = current_page()
+        if page <= 1:
+            return
+        offset = cursor - page_start_index(page)
+        target_page = page - 1
+        target_start = page_start_index(target_page)
+        target_end = min(target_start + SKILL_PAGE_SIZE - 1, len(current_rows()) - 1)
+        cursor = min(target_start + offset, target_end)
+
+    @bindings.add("right")
+    def _page_right(event) -> None:
+        nonlocal cursor
+        if cursor <= 1:
+            return
+        page = current_page()
+        page_count = total_pages()
+        if page >= page_count:
+            return
+        offset = cursor - page_start_index(page)
+        target_page = page + 1
+        target_start = page_start_index(target_page)
+        target_end = min(target_start + SKILL_PAGE_SIZE - 1, len(current_rows()) - 1)
+        cursor = min(target_start + offset, target_end)
 
     @bindings.add("backspace")
     def _backspace(event) -> None:
@@ -449,6 +508,10 @@ def prompt_skill_selector(questionary, style, keywords: list[str], skills: list[
         nonlocal result
         rows = current_rows()
         row_type, value = rows[cursor]
+        if row_type == "back":
+            result = list(selected)
+            event.app.exit()
+            return
         if row_type == "next":
             result = list(selected)
             event.app.exit()

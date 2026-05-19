@@ -1,6 +1,6 @@
 # hiring.cafe Job Scraper
 
-Scrapes [hiring.cafe](https://hiring.cafe) for software-focused jobs using a preset-driven CLI. The built-in preset starts with Germany or remote Europe and seed terms like `.NET`, `C#`, `ASP.NET`, `TypeScript`, and `React`, but the interactive flow also lets you select payload-derived skills and broaden seniority beyond entry-level. Results are saved to `jobs.md` and `jobs.json`, sorted by posting date (newest first).
+Unlike a basic scraper that just downloads listings and dumps them to a file, this project works as an interactive search tool for [hiring.cafe](https://hiring.cafe). It builds a user-selected search scope, extracts embedded Next.js payload data from a site without a public API, lets you combine manual keywords with payload-derived skills, applies structured filters like seniority/location/commitment, and saves reusable presets for later runs. The built-in preset starts with software-focused roles in Germany or remote Europe and seed terms like `.NET`, `C#`, `ASP.NET`, `TypeScript`, and `React`, while results are exported to `jobs.md` and `jobs.json`, sorted by posting date (newest first).
 
 ## Setup
 

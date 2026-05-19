@@ -185,14 +185,14 @@ def resolve_interactive_start() -> SearchConfig:
     questionary = _load_questionary()
     style = questionary.Style(
         [
-            ("qmark", "fg:#7aa2f7 bold"),
-            ("question", "fg:#d8e6b5 bold"),
-            ("answer", "fg:#9ece6a bold"),
-            ("pointer", "fg:#f0b35a bold noreverse"),
-            ("highlighted", "fg:#f0b35a bold noreverse"),
-            ("selected", "fg:#f0b35a noreverse"),
-            ("instruction", "fg:#7dcfff"),
-            ("text", "fg:#d8e6b5"),
+            ("qmark", "fg:#7fbbb3 bold"),
+            ("question", "fg:#d3c6aa bold"),
+            ("answer", "fg:#a7c080 bold"),
+            ("pointer", "fg:#e69875 bold noreverse"),
+            ("highlighted", "fg:#e69875 bold noreverse"),
+            ("selected", "fg:#dbbc7f noreverse"),
+            ("instruction", "fg:#83c092"),
+            ("text", "fg:#d3c6aa"),
         ]
     )
 
@@ -220,7 +220,7 @@ def resolve_interactive_start() -> SearchConfig:
         if not saved_presets:
             questionary.print(
                 f"No saved presets found in `{PRESETS_DIR}/`. Starting a new search instead.",
-                style="fg:#ff9e64",
+                style="fg:#e69875",
             )
             return collect_config(build_fresh_search_config())
         preset_slug = questionary.select(
@@ -248,7 +248,7 @@ def resolve_interactive_start() -> SearchConfig:
         if not saved_presets:
             questionary.print(
                 f"No saved presets found in `{PRESETS_DIR}/`.",
-                style="fg:#ff9e64",
+                style="fg:#e69875",
             )
             return resolve_interactive_start()
         preset_slug = questionary.select(
@@ -276,7 +276,7 @@ def resolve_interactive_start() -> SearchConfig:
             raise SystemExit(0)
         if confirmed == "Yes":
             delete_saved_preset(preset_slug)
-            questionary.print(f"Deleted preset → {preset_slug}", style="fg:#9ece6a")
+            questionary.print(f"Deleted preset → {preset_slug}", style="fg:#a7c080")
         return resolve_interactive_start()
     return collect_config(build_fresh_search_config())
 

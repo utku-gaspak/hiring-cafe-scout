@@ -12,7 +12,7 @@ Unlike a basic scraper that just downloads listings and dumps them to a file, th
 
 ## Demo
 
-![Interactive demo](assets/demo.gif)
+![Interactive demo](assets/demo1.gif)
 
 ## Setup
 

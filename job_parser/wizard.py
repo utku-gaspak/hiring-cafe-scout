@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from job_parser.config import CITY_COORDS, DEFAULT_DEPARTMENTS, SearchConfig
 from job_parser.discovery import discover_filter_catalog
+from job_parser.loading import run_with_loading
 from job_parser.presets import PRESETS_DIR, save_preset
 
 
@@ -38,19 +39,19 @@ def collect_config(defaults: SearchConfig | None = None) -> SearchConfig:
     questionary = _load_questionary()
     style = questionary.Style(
         [
-            ("qmark", "fg:#7aa2f7 bold"),
-            ("question", "fg:#d8e6b5 bold"),
-            ("answer", "fg:#9ece6a bold"),
-            ("pointer", "fg:#f0b35a bold noreverse"),
-            ("highlighted", "fg:#f0b35a bold noreverse"),
-            ("selected", "fg:#f0b35a noreverse"),
-            ("separator", "fg:#565f89"),
-            ("instruction", "fg:#7dcfff"),
-            ("text", "fg:#d8e6b5"),
+            ("qmark", "fg:#7fbbb3 bold"),
+            ("question", "fg:#d3c6aa bold"),
+            ("answer", "fg:#a7c080 bold"),
+            ("pointer", "fg:#e69875 bold noreverse"),
+            ("highlighted", "fg:#e69875 bold noreverse"),
+            ("selected", "fg:#dbbc7f noreverse"),
+            ("separator", "fg:#859289"),
+            ("instruction", "fg:#83c092"),
+            ("text", "fg:#d3c6aa"),
         ]
     )
 
-    catalog = discover_filter_catalog(base.base_url)
+    catalog = run_with_loading("Loading live payload options", lambda: discover_filter_catalog(base.base_url))
     keywords = prompt_search_terms(questionary, style, base.keywords, catalog.skills)
     departments = prompt_department_editor(questionary, style, base.departments)
     workplace_types = prompt_checkbox(
@@ -144,17 +145,18 @@ def collect_config(defaults: SearchConfig | None = None) -> SearchConfig:
         radius_city=radius_city,
     )
 
-    if not prompt_yes_no(
-        questionary,
-        style,
-        f"{render_summary(config)}\n\nStart scraping with these settings?",
-        default=True,
-    ):
+    while True:
+        action = prompt_start_action(
+            questionary,
+            style,
+            f"{render_summary(config)}\n\nStart scraping with these settings?",
+        )
+        if action == "start":
+            maybe_save_preset(questionary, style, config)
+            return config
+        if action == "edit":
+            return collect_config(config)
         raise SystemExit(0)
-
-    maybe_save_preset(questionary, style, config)
-
-    return config
 
 
 def render_summary(config: SearchConfig) -> str:
@@ -228,7 +230,7 @@ def prompt_search_terms(questionary, style, default_keywords: list[str], skills:
             if selected:
                 keywords = selected
             else:
-                questionary.print("Keep at least one term selected.", style="fg:#f7768e")
+                questionary.print("Keep at least one term selected.", style="fg:#e67e80")
         elif action == "skills":
             keywords = prompt_skill_selector(questionary, style, keywords, skills)
         elif action == "add":
@@ -246,7 +248,7 @@ def prompt_search_terms(questionary, style, default_keywords: list[str], skills:
             if not keywords:
                 questionary.print(
                     "Add at least one skill or manual keyword before continuing.",
-                    style="fg:#f7768e",
+                    style="fg:#e67e80",
                 )
                 continue
             return keywords
@@ -281,7 +283,7 @@ def prompt_department_editor(questionary, style, default_departments: list[str])
             if selected:
                 departments = selected
             else:
-                questionary.print("Keep at least one department selected.", style="fg:#f7768e")
+                questionary.print("Keep at least one department selected.", style="fg:#e67e80")
             continue
         if action == "add":
             new_department = questionary.text(
@@ -297,7 +299,7 @@ def prompt_department_editor(questionary, style, default_departments: list[str])
             continue
         if departments:
             return departments
-        questionary.print("Keep at least one department selected.", style="fg:#f7768e")
+        questionary.print("Keep at least one department selected.", style="fg:#e67e80")
 
 
 def prompt_skill_selector(questionary, style, keywords: list[str], skills: list[str]) -> list[str]:
@@ -671,7 +673,7 @@ def prompt_checkbox(questionary, style, title: str, options: list[str], default:
             if selected or allow_empty:
                 return list(selected)
             current_focus = ("next", None)
-            questionary.print("Select at least one option.", style="fg:#f7768e")
+            questionary.print("Select at least one option.", style="fg:#e67e80")
 
 
 def prompt_select(questionary, style, title: str, options: list[str], default: str) -> str:
@@ -699,6 +701,23 @@ def prompt_yes_no(questionary, style, title: str, default: bool) -> bool:
     if result is None:
         raise SystemExit(0)
     return result == "Yes"
+
+
+def prompt_start_action(questionary, style, title: str) -> str:
+    result = questionary.select(
+        title,
+        choices=[
+            questionary.Choice("Start scraping", value="start"),
+            questionary.Choice("Edit settings", value="edit"),
+            questionary.Choice("Cancel", value="cancel"),
+        ],
+        default="start",
+        style=style,
+        instruction="Use arrows to move, enter to continue",
+    ).ask()
+    if result is None:
+        raise SystemExit(0)
+    return str(result)
 
 
 def maybe_save_preset(questionary, style, config: SearchConfig) -> None:
@@ -733,7 +752,7 @@ def maybe_save_preset(questionary, style, config: SearchConfig) -> None:
     )
     questionary.print(
         f"Saved preset → {preset.path}",
-        style="fg:#9ece6a",
+        style="fg:#a7c080",
     )
 
 

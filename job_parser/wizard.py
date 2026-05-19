@@ -1,22 +1,17 @@
 from __future__ import annotations
 
 from job_parser.config import CITY_COORDS, SearchConfig
+from job_parser.discovery import FilterOption, discover_filter_catalog
 
 
-DEPARTMENT_OPTIONS = [
-    "Software Development",
-    "Information Technology",
-    "Engineering",
-]
 WORKPLACE_OPTIONS = ["Remote", "Hybrid", "Onsite"]
 COMMITMENT_OPTIONS = ["Full Time", "Part Time", "Contract"]
 SENIORITY_OPTIONS = ["Entry", "Junior", "Associate", "Intern", "Graduate", "Unspecified"]
 REMOTE_SCOPE_OPTIONS = ["Europe", "Worldwide"]
 OUTPUT_OPTIONS = ["Markdown", "JSON"]
-COUNTRY_SCOPE_OPTIONS = ["Germany only", "Custom country codes"]
 LOCATION_MODES = [
     "No city filter",
-    "Select common cities",
+    "Select available locations",
     "Enter custom city names",
     "Use radius filter",
 ]
@@ -28,25 +23,20 @@ def collect_config(defaults: SearchConfig | None = None) -> SearchConfig:
     style = questionary.Style(
         [
             ("qmark", "fg:#7aa2f7 bold"),
-            ("question", "bold"),
+            ("question", "fg:#d8e6b5 bold"),
             ("answer", "fg:#9ece6a bold"),
-            ("pointer", "fg:#ff9e64 bold"),
-            ("highlighted", "fg:#ff9e64 bold"),
-            ("selected", "fg:#9ece6a"),
+            ("pointer", "fg:#e7d79a bold"),
+            ("highlighted", "fg:#e7d79a bold"),
+            ("selected", "fg:#e7d79a"),
             ("separator", "fg:#565f89"),
             ("instruction", "fg:#7dcfff"),
-            ("text", ""),
+            ("text", "fg:#d8e6b5"),
         ]
     )
 
+    catalog = discover_filter_catalog(base.base_url)
     keywords = prompt_keyword_editor(questionary, style, base.keywords)
-    departments = prompt_checkbox(
-        questionary,
-        style,
-        "Departments",
-        DEPARTMENT_OPTIONS,
-        base.departments,
-    )
+    keywords = prompt_skill_selector(questionary, style, keywords, catalog.skills)
     workplace_types = prompt_checkbox(
         questionary,
         style,
@@ -54,7 +44,7 @@ def collect_config(defaults: SearchConfig | None = None) -> SearchConfig:
         WORKPLACE_OPTIONS,
         base.workplace_types,
     )
-    allowed_countries = prompt_country_scope(questionary, style, base.allowed_countries)
+    allowed_countries = prompt_country_scope(questionary, style, base.allowed_countries, catalog.countries)
     location_mode = prompt_select(
         questionary,
         style,
@@ -67,6 +57,7 @@ def collect_config(defaults: SearchConfig | None = None) -> SearchConfig:
         style,
         base,
         location_mode,
+        catalog.locations,
     )
     seniority_labels = prompt_checkbox(
         questionary,
@@ -108,15 +99,15 @@ def collect_config(defaults: SearchConfig | None = None) -> SearchConfig:
         style=style,
     ).ask()
     max_pages = prompt_max_pages(questionary, style, base.max_pages)
-    include_seen = questionary.confirm(
+    include_seen = prompt_yes_no(
+        questionary,
+        style,
         "Include previously seen jobs?",
         default=base.include_seen,
-        style=style,
-    ).ask()
+    )
 
     config = SearchConfig(
         keywords=keywords,
-        departments=departments,
         workplace_types=workplace_types,
         allowed_countries=allowed_countries,
         remote_scopes=remote_scopes,
@@ -136,11 +127,12 @@ def collect_config(defaults: SearchConfig | None = None) -> SearchConfig:
         radius_city=radius_city,
     )
 
-    if not questionary.confirm(
+    if not prompt_yes_no(
+        questionary,
+        style,
         f"{render_summary(config)}\n\nStart scraping with these settings?",
         default=True,
-        style=style,
-    ).ask():
+    ):
         raise SystemExit(0)
 
     return config
@@ -161,7 +153,6 @@ def render_summary(config: SearchConfig) -> str:
 
     lines = [
         f"Keywords: {', '.join(config.keywords)}",
-        f"Departments: {', '.join(config.departments)}",
         f"Workplace types: {', '.join(config.workplace_types)}",
         f"Countries: {', '.join(config.allowed_countries)}",
         location_detail,
@@ -179,13 +170,24 @@ def render_summary(config: SearchConfig) -> str:
 def prompt_keyword_editor(questionary, style, default_keywords: list[str]) -> list[str]:
     keywords = list(default_keywords)
     while True:
-        action = questionary.select(
-            "Keywords",
-            choices=[
-                questionary.Choice(f"Edit selected keywords ({', '.join(keywords)})", value="edit"),
+        keyword_summary = ", ".join(keywords) if keywords else "No keywords selected"
+        choices = []
+        if keywords:
+            choices.append(
+                questionary.Choice(
+                    f"Edit selected keywords ({keyword_summary})",
+                    value="edit",
+                )
+            )
+        choices.extend(
+            [
                 questionary.Choice("Add another keyword", value="add"),
                 questionary.Choice("Continue", value="continue"),
-            ],
+            ]
+        )
+        action = questionary.select(
+            "Keywords",
+            choices=choices,
             style=style,
             instruction="Use arrows to move, enter to continue",
         ).ask()
@@ -213,41 +215,225 @@ def prompt_keyword_editor(questionary, style, default_keywords: list[str]) -> li
             if new_keyword.strip().casefold() not in normalized:
                 keywords.append(new_keyword.strip())
         else:
+            if not keywords:
+                questionary.print("Add at least one keyword before continuing.", style="fg:#f7768e")
+                continue
             return keywords
 
 
-def prompt_country_scope(questionary, style, default_countries: list[str]) -> list[str]:
-    scope = prompt_select(
-        questionary,
-        style,
-        "Country scope",
-        COUNTRY_SCOPE_OPTIONS,
-        "Germany only" if default_countries == ["DE"] else "Custom country codes",
+def prompt_skill_selector(questionary, style, keywords: list[str], skills: list[str]) -> list[str]:
+    if not skills:
+        return keywords
+
+    try:
+        from prompt_toolkit.application import Application
+        from prompt_toolkit.key_binding import KeyBindings
+        from prompt_toolkit.layout import HSplit, Layout
+        from prompt_toolkit.layout.controls import FormattedTextControl
+        from prompt_toolkit.layout.containers import Window
+    except ModuleNotFoundError as exc:
+        raise SystemExit(
+            "Missing dependency: prompt_toolkit\n"
+            "Install it with `python3 -m pip install -r requirements.txt`."
+        ) from exc
+
+    selected = list(keywords)
+    query = ""
+    cursor = 0
+    result: list[str] | None = None
+
+    def selected_skill_summary() -> str:
+        selected_set = {value.casefold() for value in selected}
+        selected_skills = [skill for skill in skills if skill.casefold() in selected_set]
+        summary = ", ".join(selected_skills[:6])
+        if len(selected_skills) > 6:
+            summary += ", ..."
+        return summary
+
+    def filtered_skills() -> list[str]:
+        lowered = query.casefold().strip()
+        matches = list(skills)
+        if lowered:
+            matches = [skill for skill in skills if lowered in skill.casefold()]
+
+        selected_set = {value.casefold() for value in selected}
+        chosen = [skill for skill in matches if skill.casefold() in selected_set]
+        remaining = [skill for skill in matches if skill.casefold() not in selected_set]
+        return [*chosen, *remaining]
+
+    def current_rows() -> list[tuple[str, str | None]]:
+        return [("next", None), *[("skill", skill) for skill in filtered_skills()]]
+
+    def clamp_cursor() -> None:
+        nonlocal cursor
+        rows = current_rows()
+        if not rows:
+            cursor = 0
+            return
+        cursor = max(0, min(cursor, len(rows) - 1))
+
+    def render_prompt():
+        summary = selected_skill_summary()
+        title = "Skills"
+        if summary:
+            title = f"Skills ({summary})"
+
+        rows = current_rows()
+        if not rows:
+            rows = [("next", None)]
+
+        text: list[tuple[str, str]] = [
+            ("class:question", title),
+            ("", "\n"),
+            ("class:instruction", "Type to filter. Use arrows to move. Press enter to toggle. Choose Next to continue."),
+            ("", "\n\n"),
+            ("class:text", f"Search: {query or 'all skills'}"),
+            ("", "\n\n"),
+        ]
+
+        selected_set = {value.casefold() for value in selected}
+        for index, (row_type, value) in enumerate(rows):
+            is_active = index == cursor
+            marker_style = "class:pointer" if is_active else "class:text"
+            label_style = "class:highlighted" if is_active else "class:text"
+            pointer = "» " if is_active else "  "
+            if row_type == "next":
+                marker = "→"
+                label = "Next"
+            else:
+                marker = "✓" if value and value.casefold() in selected_set else "·"
+                label = value or ""
+            text.extend(
+                [
+                    (marker_style, pointer),
+                    (marker_style, f"{marker} "),
+                    (label_style, label),
+                    ("", "\n"),
+                ]
+            )
+
+        if len(rows) == 1:
+            text.extend(
+                [
+                    ("", "\n"),
+                    ("class:text", "No skills match the current search."),
+                ]
+            )
+
+        return text
+
+    control = FormattedTextControl(render_prompt, focusable=True, show_cursor=False)
+    window = Window(content=control, always_hide_cursor=True)
+    bindings = KeyBindings()
+
+    @bindings.add("up")
+    def _move_up(event) -> None:
+        nonlocal cursor
+        cursor = max(0, cursor - 1)
+
+    @bindings.add("down")
+    def _move_down(event) -> None:
+        nonlocal cursor
+        cursor = min(len(current_rows()) - 1, cursor + 1)
+
+    @bindings.add("backspace")
+    def _backspace(event) -> None:
+        nonlocal query, cursor
+        if query:
+            query = query[:-1]
+            cursor = 0
+
+    @bindings.add("c-c")
+    @bindings.add("c-d")
+    @bindings.add("escape")
+    def _abort(event) -> None:
+        raise SystemExit(0)
+
+    @bindings.add("enter")
+    def _enter(event) -> None:
+        nonlocal result
+        rows = current_rows()
+        row_type, value = rows[cursor]
+        if row_type == "next":
+            result = list(selected)
+            event.app.exit()
+            return
+        if value is None:
+            return
+        normalized = value.casefold()
+        existing = {item.casefold() for item in selected}
+        if normalized in existing:
+            selected[:] = [item for item in selected if item.casefold() != normalized]
+        else:
+            selected.append(value)
+
+    @bindings.add("<any>")
+    def _type_char(event) -> None:
+        nonlocal query, cursor
+        if event.data and event.data.isprintable():
+            query += event.data
+            cursor = 0
+
+    app = Application(
+        layout=Layout(HSplit([window])),
+        key_bindings=bindings,
+        full_screen=False,
+        style=style,
     )
-    if scope == "Germany only":
-        return ["DE"]
+    app.run()
+    if result is None:
+        raise SystemExit(0)
+    return result
+
+
+def prompt_country_scope(questionary, style, default_countries: list[str], options: list[FilterOption]) -> list[str]:
+    if options:
+        selected_labels = {
+            value.casefold()
+            for value in default_countries
+        }
+        default_labels = [
+            option.label
+            for option in options
+            if option.value.casefold() in selected_labels or option.label.casefold() in selected_labels
+        ]
+        selected = prompt_checkbox(
+            questionary,
+            style,
+            "Countries",
+            [option.label for option in options],
+            default_labels,
+        )
+        values_by_label = {option.label: option.value for option in options}
+        return [values_by_label[label] for label in selected]
 
     countries = questionary.text(
-        "Custom ISO country codes",
+        "Custom country codes or names",
         default=",".join(default_countries),
         style=style,
-        validate=lambda value: bool(csv_values(value)) or "Enter at least one country code.",
+        validate=lambda value: bool(csv_values(value)) or "Enter at least one country.",
     ).ask()
     if countries is None:
         raise SystemExit(0)
-    return [value.upper() for value in csv_values(countries)]
+    return csv_values(countries)
 
 
-def prompt_location_details(questionary, style, base: SearchConfig, location_mode: str) -> tuple[list[str], str, int | None]:
+def prompt_location_details(
+    questionary,
+    style,
+    base: SearchConfig,
+    location_mode: str,
+    discovered_locations: list[str],
+) -> tuple[list[str], str, int | None]:
     if location_mode == "No city filter":
         return [], "", None
-    if location_mode == "Select common cities":
+    if location_mode == "Select available locations":
         cities = prompt_checkbox(
             questionary,
             style,
-            "Select common cities",
-            list(CITY_COORDS.keys()),
-            [city for city in base.cities if city in CITY_COORDS],
+            "Select available locations",
+            _merge_location_defaults(discovered_locations, base.cities),
+            [city for city in base.cities if city in discovered_locations],
         )
         return cities, "", None
     if location_mode == "Enter custom city names":
@@ -299,11 +485,12 @@ def prompt_max_pages(questionary, style, default_value: int | None) -> int | Non
 def prompt_checkbox(questionary, style, title: str, options: list[str], default: list[str], allow_empty: bool = False) -> list[str]:
     selected = list(default)
     selected_set = {item.casefold() for item in selected}
+    current_focus: tuple[str, str | None] = ("toggle", options[0]) if options else ("next", None)
 
     while True:
         choices = [
             questionary.Choice(
-                f"{'●' if option.casefold() in selected_set else '○'} {option}",
+                f"{'✓' if option.casefold() in selected_set else '·'} {option}",
                 value=("toggle", option),
             )
             for option in options
@@ -314,6 +501,7 @@ def prompt_checkbox(questionary, style, title: str, options: list[str], default:
         result = questionary.select(
             title,
             choices=choices,
+            default=current_focus,
             style=style,
             instruction="Use arrows to move. Press enter to toggle. Choose Next to continue.",
         ).ask()
@@ -321,6 +509,7 @@ def prompt_checkbox(questionary, style, title: str, options: list[str], default:
             raise SystemExit(0)
         action, option = result
         if action == "toggle" and option is not None:
+            current_focus = ("toggle", option)
             normalized = option.casefold()
             if normalized in selected_set:
                 selected = [item for item in selected if item.casefold() != normalized]
@@ -332,6 +521,7 @@ def prompt_checkbox(questionary, style, title: str, options: list[str], default:
         if action == "next":
             if selected or allow_empty:
                 return list(selected)
+            current_focus = ("next", None)
             questionary.print("Select at least one option.", style="fg:#f7768e")
 
 
@@ -346,6 +536,20 @@ def prompt_select(questionary, style, title: str, options: list[str], default: s
     if result is None:
         raise SystemExit(0)
     return str(result)
+
+
+def prompt_yes_no(questionary, style, title: str, default: bool) -> bool:
+    default_label = "Yes" if default else "No"
+    result = questionary.select(
+        title,
+        choices=["Yes", "No"],
+        default=default_label,
+        style=style,
+        instruction="Use arrows to move, enter to continue",
+    ).ask()
+    if result is None:
+        raise SystemExit(0)
+    return result == "Yes"
 
 
 def csv_values(value: str) -> list[str]:
@@ -372,9 +576,7 @@ def _default_location_mode(config: SearchConfig) -> str:
     if config.radius_km and config.radius_city:
         return "Use radius filter"
     if config.cities:
-        if any(city in CITY_COORDS for city in config.cities):
-            return "Select common cities"
-        return "Enter custom city names"
+        return "Select available locations"
     return "No city filter"
 
 
@@ -387,3 +589,13 @@ def _load_questionary():
             "Install it with `python3 -m pip install -r requirements.txt`."
         ) from exc
     return questionary
+
+
+def _merge_location_defaults(discovered: list[str], selected: list[str]) -> list[str]:
+    values = list(discovered)
+    seen = {value.casefold() for value in values}
+    for value in selected:
+        if value.casefold() not in seen:
+            values.append(value)
+            seen.add(value.casefold())
+    return values

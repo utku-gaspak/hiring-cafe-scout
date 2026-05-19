@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from job_parser.cli import apply_args_to_config, build_parser, parse_csv
+from job_parser.cli import apply_args_to_config, build_fresh_search_config, build_parser, parse_csv
 from job_parser.config import SearchConfig, build_search_state, load_search_config, save_search_config
 from job_parser.presets import (
     DEFAULT_PRESET_SLUG,
@@ -54,8 +54,6 @@ class CliConfigTests(unittest.TestCase):
                 "--no-interactive",
                 "--keywords",
                 "python,go",
-                "--departments",
-                "Engineering,Information Technology",
                 "--workplace-types",
                 "Remote,Hybrid",
                 "--countries",
@@ -83,7 +81,6 @@ class CliConfigTests(unittest.TestCase):
         config = apply_args_to_config(SearchConfig(), args)
 
         self.assertEqual(config.keywords, ["python", "go"])
-        self.assertEqual(config.departments, ["Engineering", "Information Technology"])
         self.assertEqual(config.workplace_types, ["Remote", "Hybrid"])
         self.assertEqual(config.allowed_countries, ["DE", "NL"])
         self.assertEqual(config.cities, ["Berlin", "Hamburg"])
@@ -125,6 +122,20 @@ class PresetRegistryTests(unittest.TestCase):
         fresh_config = get_default_config()
 
         self.assertNotIn("Python", fresh_config.keywords)
+
+    def test_fresh_search_config_does_not_inherit_preset_filters(self):
+        config = build_fresh_search_config()
+
+        self.assertEqual(config.keywords, [])
+        self.assertEqual(config.departments, [])
+        self.assertEqual(config.workplace_types, [])
+        self.assertEqual(config.allowed_countries, [])
+        self.assertEqual(config.remote_scopes, [])
+        self.assertEqual(config.seniority_terms, [])
+        self.assertFalse(config.include_unspecified_seniority)
+        self.assertEqual(config.commitments, [])
+        self.assertTrue(config.export_markdown)
+        self.assertTrue(config.export_json)
 
     def test_saved_presets_are_loaded_from_directory(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -170,12 +181,14 @@ class PresetRegistryTests(unittest.TestCase):
 
 
 class SearchStateTests(unittest.TestCase):
-    def test_search_state_uses_configured_departments(self):
+    def test_search_state_uses_fixed_software_departments(self):
         config = SearchConfig(departments=["Engineering", "Design"])
         search_state = build_search_state(config)
 
+        self.assertIn("Software%20Development", search_state)
         self.assertIn("Engineering", search_state)
-        self.assertIn("Design", search_state)
+        self.assertIn("Information%20Technology", search_state)
+        self.assertNotIn("Design", search_state)
 
 
 if __name__ == "__main__":

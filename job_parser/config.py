@@ -100,7 +100,7 @@ def build_search_state(config: SearchConfig) -> str:
             {
                 "seniorityLevel": ["Entry Level"],
                 "commitmentTypes": ["Full Time"],
-                "departments": config.departments,
+                "departments": DEFAULT_DEPARTMENTS,
             }
         )
     )

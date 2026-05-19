@@ -67,7 +67,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Save the resolved config and exit without scraping.",
     )
     parser.add_argument("--keywords", help="Comma-separated keywords.")
-    parser.add_argument("--departments", help="Comma-separated hiring.cafe departments.")
     parser.add_argument("--workplace-types", help="Comma-separated workplace types.")
     parser.add_argument("--countries", help="Comma-separated ISO country codes.")
     parser.add_argument("--cities", help="Comma-separated city filters.")
@@ -105,7 +104,6 @@ def has_cli_overrides(args: argparse.Namespace) -> bool:
         for value in [
             args.preset,
             args.keywords,
-            args.departments,
             args.workplace_types,
             args.countries,
             args.cities,
@@ -132,8 +130,6 @@ def apply_args_to_config(base: SearchConfig, args: argparse.Namespace) -> Search
 
     if args.keywords:
         config.keywords = parse_csv(args.keywords)
-    if args.departments:
-        config.departments = parse_csv(args.departments)
     if args.workplace_types:
         config.workplace_types = parse_csv(args.workplace_types)
     if args.countries:
@@ -183,12 +179,13 @@ def resolve_interactive_start() -> SearchConfig:
     style = questionary.Style(
         [
             ("qmark", "fg:#7aa2f7 bold"),
-            ("question", "bold"),
+            ("question", "fg:#d8e6b5 bold"),
             ("answer", "fg:#9ece6a bold"),
-            ("pointer", "fg:#ff9e64 bold"),
-            ("highlighted", "fg:#ff9e64 bold"),
-            ("selected", "fg:#9ece6a"),
+            ("pointer", "fg:#e7d79a bold"),
+            ("highlighted", "fg:#e7d79a bold"),
+            ("selected", "fg:#e7d79a"),
             ("instruction", "fg:#7dcfff"),
+            ("text", "fg:#d8e6b5"),
         ]
     )
 
@@ -217,7 +214,7 @@ def resolve_interactive_start() -> SearchConfig:
                 f"No saved presets found in `{PRESETS_DIR}/`. Starting a new search instead.",
                 style="fg:#ff9e64",
             )
-            return collect_config(get_default_config())
+            return collect_config(build_fresh_search_config())
         preset_slug = questionary.select(
             "Saved presets",
             choices=[
@@ -238,7 +235,7 @@ def resolve_interactive_start() -> SearchConfig:
             preset.name,
             style,
         )
-    return collect_config(get_default_config())
+    return collect_config(build_fresh_search_config())
 
 
 def choose_preset_action(config: SearchConfig, preset_name: str, style) -> SearchConfig:
@@ -266,6 +263,22 @@ def load_preset_config(slug: str) -> SearchConfig:
     except KeyError as exc:
         raise SystemExit(f"Unknown preset: {slug}") from exc
     return SearchConfig.from_dict(preset.config.to_dict())
+
+
+def build_fresh_search_config() -> SearchConfig:
+    return SearchConfig(
+        keywords=[],
+        departments=[],
+        workplace_types=[],
+        allowed_countries=[],
+        remote_scopes=[],
+        seniority_terms=[],
+        include_unspecified_seniority=False,
+        commitments=[],
+        cities=[],
+        radius_km=None,
+        radius_city="",
+    )
 
 
 def print_presets() -> None:

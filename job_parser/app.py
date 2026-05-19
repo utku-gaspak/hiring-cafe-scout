@@ -35,8 +35,8 @@ async def run(config: SearchConfig | None = None) -> None:
         )
 
     print("hiring.cafe scraper")
+    print("  scope    : software development, information technology, engineering")
     print(f"  keywords : {', '.join(active_config.keywords)}")
-    print(f"  categories: {', '.join(active_config.departments)}")
     print(f"  location : {' | '.join(location_parts)}")
     print(f"  level    : {seniority_display}")
     print(f"  type     : {', '.join(active_config.commitments)}")

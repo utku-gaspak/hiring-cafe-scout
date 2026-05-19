@@ -58,6 +58,8 @@ def matches_commitment(job: Job, config: SearchConfig) -> bool:
 def matches_location(job: Job, config: SearchConfig) -> bool:
     work_type = job.work_type.lower()
     allowed_workplace_types = {value.lower() for value in config.workplace_types}
+    allowed_countries = {value.lower() for value in config.allowed_countries}
+    location_haystack = " ".join([job.location, *job.cities]).lower()
 
     if work_type and work_type not in allowed_workplace_types:
         return False
@@ -72,7 +74,9 @@ def matches_location(job: Job, config: SearchConfig) -> bool:
         return False
 
     if config.allowed_countries and not any(
-        country in config.allowed_countries for country in job.countries
+        country.lower() in allowed_countries for country in job.countries
+    ) and not any(
+        country in location_haystack for country in allowed_countries
     ):
         return False
 

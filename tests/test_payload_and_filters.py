@@ -171,6 +171,11 @@ class FilterTests(unittest.TestCase):
         self.config.remote_scopes = ["Worldwide"]
         self.assertFalse(matches_location(self.job, self.config))
 
+    def test_location_filter_accepts_country_names_from_discovery(self):
+        self.job.work_type = "Hybrid"
+        self.config.allowed_countries = ["Germany"]
+        self.assertTrue(matches_location(self.job, self.config))
+
 
 class WizardHelperTests(unittest.TestCase):
     def test_csv_values_discards_empty_entries(self):

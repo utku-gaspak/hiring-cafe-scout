@@ -1,6 +1,6 @@
 # hiring.cafe Job Scraper
 
-Scrapes [hiring.cafe](https://hiring.cafe) for junior/entry-level full-time jobs in Germany or Remote Europe matching `.NET`, `C#`, `ASP.NET`, `TypeScript`, or `React`. Results are saved to `jobs.md` and `jobs.json`, sorted by posting date (newest first).
+Scrapes [hiring.cafe](https://hiring.cafe) for junior/entry-level full-time jobs using a preset-driven CLI. The current built-in preset focuses on software roles in Germany or remote Europe matching `.NET`, `C#`, `ASP.NET`, `TypeScript`, or `React`. Results are saved to `jobs.md` and `jobs.json`, sorted by posting date (newest first).
 
 ## Setup
 
@@ -22,12 +22,34 @@ uv run python -m playwright install chromium
 uv run scraper.py
 ```
 
-If run in a normal terminal, the app starts an interactive setup wizard first. It uses arrow-key selection, checkbox prompts, and a final review step.
+If run in a normal terminal, the app starts with a preset-first interactive flow:
+
+1. choose the built-in preset, a saved preset, or a new search
+2. optionally edit the chosen config
+3. review and start scraping
+
+Multi-select steps use:
+
+- arrow keys to move
+- `Enter` to toggle
+- a `Next` row at the bottom to continue
 
 To skip the wizard and run with defaults:
 
 ```bash
 uv run scraper.py --no-interactive
+```
+
+To list presets:
+
+```bash
+uv run scraper.py --list-presets
+```
+
+To run a specific preset directly:
+
+```bash
+uv run scraper.py --preset software-germany-junior --no-interactive
 ```
 
 To run non-interactively with flags:
@@ -36,6 +58,7 @@ To run non-interactively with flags:
 uv run scraper.py \
   --no-interactive \
   --keywords ".NET,React" \
+  --departments "Software Development,Engineering" \
   --workplace-types "Remote,Hybrid" \
   --countries "DE,NL" \
   --cities "Berlin,Hamburg" \
@@ -44,18 +67,20 @@ uv run scraper.py \
   --json-output jobs.json
 ```
 
-To save and reuse a preset config:
+To save and reuse a JSON config file:
 
 ```bash
 uv run scraper.py --no-interactive --keywords "Python,React" --save-config search.json --save-config-only
 uv run scraper.py --config search.json --no-interactive
 ```
 
+Saved presets are separate from `--config` files. Presets live in `presets/*.json` and are available from startup selection or with `--preset <slug>`.
+
 Output is written to `jobs.md` and `jobs.json` in the same directory unless you override those paths.
 
 ## How it works
 
-1. Loads each page of hiring.cafe with `?searchState=` URL params to apply **Entry Level**, **Full Time**, and **Software Development / IT department** filters server-side — reduces results from ~160k to ~1,300 (~13 pages).
+1. Builds a `?searchState=` query from the resolved config to apply **Entry Level**, **Full Time**, and selected **departments** server-side.
 2. Extracts job data from the page's `__NEXT_DATA__` JSON block (no separate API calls needed).
 3. Applies keyword and location filters client-side on each page's results.
 4. Skips any job already recorded in `seen_ids.txt` so re-runs only surface new postings.
@@ -75,15 +100,44 @@ rm seen_ids.txt
 
 You can configure the scraper in three ways:
 
-1. Interactive wizard
-2. Non-interactive CLI flags
-3. JSON config file via `--config`
+1. Built-in or saved preset
+2. Interactive wizard edits
+3. Non-interactive CLI flags
+4. JSON config file via `--config`
+
+### Presets
+
+The current default behavior is now a built-in preset:
+
+- `software-germany-junior`
+
+Saved presets can be placed in:
+
+```text
+presets/*.json
+```
+
+Example saved preset:
+
+```json
+{
+  "slug": "frontend-berlin",
+  "name": "Frontend Berlin",
+  "description": "React and TypeScript roles in Berlin",
+  "config": {
+    "keywords": ["React", "TypeScript"],
+    "departments": ["Software Development", "Engineering"],
+    "cities": ["Berlin"]
+  }
+}
+```
 
 The effective config shape is:
 
 | Variable | Default | Description |
 |---|---|---|
 | `keywords` | `.NET, C#, ASP.NET, TypeScript, React` | Terms matched in job title, tools, and summary |
+| `departments` | `Software Development, Information Technology, Engineering` | Server-side hiring.cafe department scope |
 | `workplace_types` | `Remote, Hybrid, Onsite` | Allowed workplace modes |
 | `allowed_countries` | `DE` | Allowed onsite/hybrid country codes |
 | `remote_scopes` | `Europe, Worldwide` | Allowed remote reach |
@@ -101,38 +155,45 @@ The effective config shape is:
 
 ## Location filtering
 
-By default the scraper keeps **all jobs in Germany** (onsite/hybrid) plus **remote jobs open to Europe or worldwide**. You can narrow this down with city names or a radius.
+By default the scraper keeps **all jobs in allowed countries** for onsite/hybrid roles plus **remote jobs open to the selected remote scopes**. You can narrow this down with city names or a radius.
 
 ### Filter by cities
 
-Set `CITIES` to a list of city names. Partial matches work — `"Munich"` matches `"Munich, Bavaria, DE"`.
+Use the interactive wizard or `--cities` to provide city names. Partial matches work — `"Munich"` matches `"Munich, Bavaria, DE"`.
 
-```python
-CITIES = ["Berlin", "Munich", "Hamburg"]
+```bash
+uv run scraper.py --no-interactive --cities "Berlin,Munich,Hamburg"
 ```
 
-Remote jobs are always included regardless of `CITIES`.
+Remote jobs are still filtered separately by `remote_scopes`.
 
 ### Filter by radius
 
-Set `RADIUS_KM` and `RADIUS_CITY` to keep only jobs within a given distance. `RADIUS_CITY` must be a key in the `CITY_COORDS` dict (pre-loaded with the 13 largest German cities).
+Use the interactive wizard or `--radius-city` plus `--radius-km` to keep only jobs within a given distance. `radius_city` must be one of the built-in cities in `CITY_COORDS`.
 
-```python
-RADIUS_KM   = 50        # kilometres
-RADIUS_CITY = "Berlin"  # centre point
+```bash
+uv run scraper.py --no-interactive --radius-city Berlin --radius-km 50
 ```
 
 This uses the exact lat/lon from each job's geolocation data and a haversine distance calculation. Remote jobs are always included regardless of radius.
 
-### Add a city to `CITY_COORDS`
+### Built-in radius cities
 
-If your target city isn't in the list, add it:
+The current built-in radius city set is:
 
-```python
-CITY_COORDS["Münster"] = (51.9607, 7.6261)
-```
-
-Coordinates can be copied from Google Maps (right-click → copy coordinates).
+- Berlin
+- Munich
+- Hamburg
+- Frankfurt
+- Cologne
+- Stuttgart
+- Düsseldorf
+- Leipzig
+- Dortmund
+- Dresden
+- Hannover
+- Nuremberg
+- Bremen
 
 ## Output formats
 
@@ -205,6 +266,7 @@ If you turn this into a CLI, these are the fields that matter most. The useful d
 | CLI option idea | Payload fields | Notes |
 |---|---|---|
 | `--keywords` | `v5_processed_job_data.core_job_title`, `v5_processed_job_data.technical_tools`, `v5_processed_job_data.requirements_summary`, fallback `job_information.title` | Current scraper matches against title, tools, and summary |
+| `--departments` | Server-side `searchState.departments` | Limits the hiring.cafe result universe before client-side filtering |
 | `--level` | `v5_processed_job_data.seniority_level` | Good candidates: `entry`, `junior`, `mid`, `senior`, `unspecified` |
 | `--full-time-only` | `v5_processed_job_data.commitment` | Current logic accepts anything containing `"full"` |
 | `--workplace-type` | `v5_processed_job_data.workplace_type` | Expected values are typically `Remote`, `Hybrid`, `Onsite` |

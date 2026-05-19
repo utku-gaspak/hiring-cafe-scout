@@ -4,21 +4,39 @@ import argparse
 import sys
 
 from job_parser.app import run
+from job_parser.branding import print_logo
 from job_parser.config import SearchConfig, load_search_config, save_search_config
+from job_parser.presets import (
+    PRESETS_DIR,
+    get_default_config,
+    get_default_preset,
+    list_all_presets,
+    list_saved_presets,
+)
 from job_parser.wizard import collect_config
 
 
 def main() -> None:
+    print_logo()
     parser = build_parser()
     args = parser.parse_args()
-    base_config = load_search_config(args.config) if args.config else SearchConfig()
+    if args.list_presets:
+        print_presets()
+        return
+
+    if args.config:
+        base_config = load_search_config(args.config)
+    elif args.preset:
+        base_config = load_preset_config(args.preset)
+    else:
+        base_config = get_default_config()
 
     if args.interactive:
         config = collect_config(base_config)
     elif should_use_non_interactive_config(args):
         config = apply_args_to_config(base_config, args)
     else:
-        config = collect_config(base_config)
+        config = resolve_interactive_start()
 
     if args.save_config:
         save_search_config(args.save_config, config)
@@ -39,6 +57,8 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Run from flags and/or config without the interactive setup wizard.",
     )
+    parser.add_argument("--preset", help="Load a built-in or saved preset by slug.")
+    parser.add_argument("--list-presets", action="store_true", help="List available presets and exit.")
     parser.add_argument("--config", help="Load search settings from a JSON config file.")
     parser.add_argument("--save-config", help="Write the resolved search settings to a JSON config file.")
     parser.add_argument(
@@ -47,6 +67,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Save the resolved config and exit without scraping.",
     )
     parser.add_argument("--keywords", help="Comma-separated keywords.")
+    parser.add_argument("--departments", help="Comma-separated hiring.cafe departments.")
     parser.add_argument("--workplace-types", help="Comma-separated workplace types.")
     parser.add_argument("--countries", help="Comma-separated ISO country codes.")
     parser.add_argument("--cities", help="Comma-separated city filters.")
@@ -82,7 +103,9 @@ def has_cli_overrides(args: argparse.Namespace) -> bool:
     return any(
         value
         for value in [
+            args.preset,
             args.keywords,
+            args.departments,
             args.workplace_types,
             args.countries,
             args.cities,
@@ -109,6 +132,8 @@ def apply_args_to_config(base: SearchConfig, args: argparse.Namespace) -> Search
 
     if args.keywords:
         config.keywords = parse_csv(args.keywords)
+    if args.departments:
+        config.departments = parse_csv(args.departments)
     if args.workplace_types:
         config.workplace_types = parse_csv(args.workplace_types)
     if args.countries:
@@ -151,3 +176,113 @@ def apply_args_to_config(base: SearchConfig, args: argparse.Namespace) -> Search
 
 def parse_csv(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def resolve_interactive_start() -> SearchConfig:
+    questionary = _load_questionary()
+    style = questionary.Style(
+        [
+            ("qmark", "fg:#7aa2f7 bold"),
+            ("question", "bold"),
+            ("answer", "fg:#9ece6a bold"),
+            ("pointer", "fg:#ff9e64 bold"),
+            ("highlighted", "fg:#ff9e64 bold"),
+            ("selected", "fg:#9ece6a"),
+            ("instruction", "fg:#7dcfff"),
+        ]
+    )
+
+    startup_choice = questionary.select(
+        "Choose how to start",
+        choices=[
+            questionary.Choice(
+                f"Use built-in preset: {get_default_preset().name}",
+                value="builtin",
+            ),
+            questionary.Choice("Use saved preset", value="saved"),
+            questionary.Choice("Create new search", value="new"),
+        ],
+        style=style,
+        instruction="Use arrows to move, enter to continue",
+    ).ask()
+    if startup_choice is None:
+        raise SystemExit(0)
+
+    if startup_choice == "builtin":
+        return choose_preset_action(get_default_config(), get_default_preset().name, style)
+    if startup_choice == "saved":
+        saved_presets = list_saved_presets()
+        if not saved_presets:
+            questionary.print(
+                f"No saved presets found in `{PRESETS_DIR}/`. Starting a new search instead.",
+                style="fg:#ff9e64",
+            )
+            return collect_config(get_default_config())
+        preset_slug = questionary.select(
+            "Saved presets",
+            choices=[
+                questionary.Choice(
+                    f"{preset.name} ({preset.slug})",
+                    value=preset.slug,
+                )
+                for preset in saved_presets.values()
+            ],
+            style=style,
+            instruction="Use arrows to move, enter to continue",
+        ).ask()
+        if preset_slug is None:
+            raise SystemExit(0)
+        preset = saved_presets[preset_slug]
+        return choose_preset_action(
+            SearchConfig.from_dict(preset.config.to_dict()),
+            preset.name,
+            style,
+        )
+    return collect_config(get_default_config())
+
+
+def choose_preset_action(config: SearchConfig, preset_name: str, style) -> SearchConfig:
+    questionary = _load_questionary()
+    action = questionary.select(
+        f"{preset_name}",
+        choices=[
+            questionary.Choice("Run this preset now", value="run"),
+            questionary.Choice("Edit this preset before running", value="edit"),
+        ],
+        style=style,
+        instruction="Use arrows to move, enter to continue",
+    ).ask()
+    if action is None:
+        raise SystemExit(0)
+    if action == "run":
+        return config
+    return collect_config(config)
+
+
+def load_preset_config(slug: str) -> SearchConfig:
+    presets = list_all_presets()
+    try:
+        preset = presets[slug]
+    except KeyError as exc:
+        raise SystemExit(f"Unknown preset: {slug}") from exc
+    return SearchConfig.from_dict(preset.config.to_dict())
+
+
+def print_presets() -> None:
+    presets = list_all_presets()
+    for preset in presets.values():
+        source = "built-in" if preset.builtin else "saved"
+        print(f"{preset.slug} [{source}]")
+        if preset.description:
+            print(f"  {preset.description}")
+
+
+def _load_questionary():
+    try:
+        import questionary
+    except ModuleNotFoundError as exc:
+        raise SystemExit(
+            "Missing dependency: questionary\n"
+            "Install it with `python3 -m pip install -r requirements.txt`."
+        ) from exc
+    return questionary

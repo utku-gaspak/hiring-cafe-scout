@@ -131,6 +131,7 @@ Suggested `SearchConfig` fields:
 
 ```text
 keywords
+departments
 workplace_types
 countries
 cities
@@ -145,6 +146,75 @@ include_seen
 ```
 
 This schema should become the contract between scraping, filtering, exporting, and future database usage.
+
+## Preset model
+
+The current default behavior should be treated as a built-in preset rather than a magic hardcoded configuration.
+
+That means the product model should become:
+
+- built-in presets
+  - example: the current software/junior/Germany-focused search
+- saved user presets
+  - reusable named configs stored on disk
+- ad hoc custom runs
+  - create a new config from scratch or from an existing preset
+
+Target startup flow:
+
+1. choose preset source
+2. load built-in preset, saved preset, or create a new search
+3. optionally edit the selected preset/config
+4. run scrape
+5. optionally save changes as a new preset or update an existing preset
+
+Preset storage should be simple and durable:
+
+- one JSON file per preset
+- stored in a dedicated presets directory
+
+Recommended structure:
+
+```text
+presets/
+  software-germany-junior.json
+  frontend-berlin.json
+  remote-eu-fullstack.json
+```
+
+Suggested preset metadata:
+
+```text
+name
+description
+created_at
+updated_at
+config
+```
+
+Where `config` is a serialized `SearchConfig`.
+
+## Server-side category scope
+
+The current scraper is still hardcoded to a narrow tech-focused department set on hiring.cafe:
+
+- `Software Development`
+- `Information Technology`
+- `Engineering`
+
+That means the tool is not yet a general job searcher. It first narrows the search server-side to software/engineering-related roles, then applies client-side filters like keywords, seniority, and location.
+
+This should be made explicit in the architecture and then moved into configuration.
+
+Target direction:
+
+- `departments` should become part of `SearchConfig`
+- the interactive wizard should let the user pick departments/categories
+- the non-interactive CLI should support department/category flags
+- JSON config presets should persist department/category selections
+- the encoded `searchState` URL should be built from config instead of a hardcoded constant
+
+This change is important because server-side department filtering determines the search universe before keyword matching happens.
 
 ## Interactive wizard design
 
@@ -179,6 +249,24 @@ Multi-select:
 Default:
 
 - all selected
+
+### 2.5 Department / category scope
+
+This should be added near the top of the flow, before most downstream filters, because it changes the result universe at the source.
+
+Initial options can still default to the current tech-focused set:
+
+- Software Development
+- Information Technology
+- Engineering
+
+But the UI and config model should support expansion to other hiring.cafe departments later.
+
+For the first configurable implementation, department selection should be:
+
+- multi-select in the interactive wizard
+- comma-separated flag in non-interactive CLI mode
+- stored in JSON config presets
 
 ### 3. Country scope
 
@@ -352,6 +440,7 @@ That means:
 - log failures without crashing the whole run where possible
 - use stable defaults when payload fields are missing
 - keep filtering deterministic and testable
+- keep server-side search-state generation deterministic and testable
 
 ## Testing plan
 
@@ -359,6 +448,7 @@ Add tests before expanding features too far.
 
 Priority test coverage:
 
+- server-side search-state generation from config
 - keyword matching
 - seniority normalization and filtering
 - commitment normalization
@@ -400,6 +490,22 @@ Implement in stages instead of rewriting everything at once.
 - support config file or saved presets
 - prepare JSON export for database sync
 
+### Phase 5
+
+- move hardcoded server-side departments into `SearchConfig`
+- add department selection to wizard, CLI flags, and config presets
+- generate `searchState` from config instead of a hardcoded constant
+- add tests for config-driven search-state generation
+
+### Phase 6
+
+- promote current defaults into a built-in preset
+- add preset directory support
+- add preset selection at startup
+- allow creating a new run from an existing preset
+- allow saving the current config as a named preset
+- add tests for preset discovery, loading, saving, and built-in preset fallback
+
 ## Portfolio value
 
 This direction is stronger than leaving the project as a single script because it demonstrates:
@@ -422,3 +528,40 @@ The next implementation step should be:
 4. only then build the interactive wizard
 
 That order keeps the UI from being built on unstable internals.
+
+## Architecture note for category expansion
+
+Before implementing configurable departments, keep this separation clear:
+
+- server-side filters
+  - departments
+  - any future hiring.cafe-native category filters
+  - encoded into `searchState`
+
+- client-side filters
+  - keywords
+  - workplace type
+  - country/city/radius
+  - seniority
+  - commitment
+  - remote scope
+
+This distinction matters because server-side filters reduce the result set upstream, while client-side filters only evaluate jobs that have already been fetched.
+
+## Architecture note for presets
+
+Presets should sit above the config layer, not replace it.
+
+Recommended layering:
+
+- preset storage / preset registry
+  - built-in presets
+  - saved user presets
+- config resolution
+  - selected preset becomes a `SearchConfig`
+  - CLI flags can override preset values
+  - wizard can edit preset-derived values
+- runtime execution
+  - scraper, filters, exporters operate only on resolved `SearchConfig`
+
+This keeps the scraping engine unaware of where the config came from.

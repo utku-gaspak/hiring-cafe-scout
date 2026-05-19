@@ -3,6 +3,11 @@ from __future__ import annotations
 from job_parser.config import CITY_COORDS, SearchConfig
 
 
+DEPARTMENT_OPTIONS = [
+    "Software Development",
+    "Information Technology",
+    "Engineering",
+]
 WORKPLACE_OPTIONS = ["Remote", "Hybrid", "Onsite"]
 COMMITMENT_OPTIONS = ["Full Time", "Part Time", "Contract"]
 SENIORITY_OPTIONS = ["Entry", "Junior", "Associate", "Intern", "Graduate", "Unspecified"]
@@ -35,6 +40,13 @@ def collect_config(defaults: SearchConfig | None = None) -> SearchConfig:
     )
 
     keywords = prompt_keyword_editor(questionary, style, base.keywords)
+    departments = prompt_checkbox(
+        questionary,
+        style,
+        "Departments",
+        DEPARTMENT_OPTIONS,
+        base.departments,
+    )
     workplace_types = prompt_checkbox(
         questionary,
         style,
@@ -104,6 +116,7 @@ def collect_config(defaults: SearchConfig | None = None) -> SearchConfig:
 
     config = SearchConfig(
         keywords=keywords,
+        departments=departments,
         workplace_types=workplace_types,
         allowed_countries=allowed_countries,
         remote_scopes=remote_scopes,
@@ -148,6 +161,7 @@ def render_summary(config: SearchConfig) -> str:
 
     lines = [
         f"Keywords: {', '.join(config.keywords)}",
+        f"Departments: {', '.join(config.departments)}",
         f"Workplace types: {', '.join(config.workplace_types)}",
         f"Countries: {', '.join(config.allowed_countries)}",
         location_detail,
@@ -283,18 +297,42 @@ def prompt_max_pages(questionary, style, default_value: int | None) -> int | Non
 
 
 def prompt_checkbox(questionary, style, title: str, options: list[str], default: list[str], allow_empty: bool = False) -> list[str]:
+    selected = list(default)
+    selected_set = {item.casefold() for item in selected}
+
     while True:
-        result = questionary.checkbox(
+        choices = [
+            questionary.Choice(
+                f"{'●' if option.casefold() in selected_set else '○'} {option}",
+                value=("toggle", option),
+            )
+            for option in options
+        ]
+        choices.append(questionary.Separator())
+        choices.append(questionary.Choice("Next", value=("next", None)))
+
+        result = questionary.select(
             title,
-            choices=[questionary.Choice(option, checked=option in default) for option in options],
-            validate=lambda values: allow_empty or bool(values) or "Select at least one option.",
+            choices=choices,
             style=style,
-            instruction="Use arrows to move, space to toggle, enter to continue",
+            instruction="Use arrows to move. Press enter to toggle. Choose Next to continue.",
         ).ask()
         if result is None:
             raise SystemExit(0)
-        if result or allow_empty:
-            return list(result)
+        action, option = result
+        if action == "toggle" and option is not None:
+            normalized = option.casefold()
+            if normalized in selected_set:
+                selected = [item for item in selected if item.casefold() != normalized]
+                selected_set.remove(normalized)
+            else:
+                selected.append(option)
+                selected_set.add(normalized)
+            continue
+        if action == "next":
+            if selected or allow_empty:
+                return list(selected)
+            questionary.print("Select at least one option.", style="fg:#f7768e")
 
 
 def prompt_select(questionary, style, title: str, options: list[str], default: str) -> str:

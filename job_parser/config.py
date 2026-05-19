@@ -6,12 +6,19 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import quote
 
+DEFAULT_DEPARTMENTS = [
+    "Software Development",
+    "Information Technology",
+    "Engineering",
+]
+
 
 @dataclass(slots=True)
 class SearchConfig:
     keywords: list[str] = field(
         default_factory=lambda: [".NET", "C#", "ASP.NET", "TypeScript", "React"]
     )
+    departments: list[str] = field(default_factory=lambda: list(DEFAULT_DEPARTMENTS))
     workplace_types: list[str] = field(
         default_factory=lambda: ["Remote", "Hybrid", "Onsite"]
     )
@@ -42,6 +49,8 @@ class SearchConfig:
         return cls(
             keywords=_normalize_str_list(payload.get("keywords"))
             or cls().keywords,
+            departments=_normalize_str_list(payload.get("departments"))
+            or cls().departments,
             workplace_types=_normalize_str_list(payload.get("workplace_types"))
             or cls().workplace_types,
             allowed_countries=_normalize_str_list(payload.get("allowed_countries"))
@@ -85,19 +94,16 @@ CITY_COORDS: dict[str, tuple[float, float]] = {
     "Bremen": (53.075, 8.807),
 }
 
-SERVER_FILTER_SEARCH_STATE = quote(
-    json.dumps(
-        {
-            "seniorityLevel": ["Entry Level"],
-            "commitmentTypes": ["Full Time"],
-            "departments": [
-                "Software Development",
-                "Information Technology",
-                "Engineering",
-            ],
-        }
+def build_search_state(config: SearchConfig) -> str:
+    return quote(
+        json.dumps(
+            {
+                "seniorityLevel": ["Entry Level"],
+                "commitmentTypes": ["Full Time"],
+                "departments": config.departments,
+            }
+        )
     )
-)
 
 
 def load_seen_ids(path: str | Path) -> set[str]:

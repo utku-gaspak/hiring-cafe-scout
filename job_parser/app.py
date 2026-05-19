@@ -4,8 +4,8 @@ import asyncio
 import sys
 
 from job_parser.config import (
-    SERVER_FILTER_SEARCH_STATE,
     SearchConfig,
+    build_search_state,
     load_seen_ids,
     save_seen_ids,
 )
@@ -36,6 +36,7 @@ async def run(config: SearchConfig | None = None) -> None:
 
     print("hiring.cafe scraper")
     print(f"  keywords : {', '.join(active_config.keywords)}")
+    print(f"  categories: {', '.join(active_config.departments)}")
     print(f"  location : {' | '.join(location_parts)}")
     print(f"  level    : {seniority_display}")
     print(f"  type     : {', '.join(active_config.commitments)}")
@@ -67,6 +68,7 @@ async def run(config: SearchConfig | None = None) -> None:
 
 async def scrape(config: SearchConfig, seen_ids: set[str]) -> list[Job]:
     all_jobs: list[Job] = []
+    search_state = build_search_state(config)
     try:
         from playwright.async_api import TimeoutError as playwright_timeout
         from playwright.async_api import async_playwright
@@ -89,7 +91,7 @@ async def scrape(config: SearchConfig, seen_ids: set[str]) -> list[Job]:
 
         page_num = 0
         while config.max_pages is None or page_num < config.max_pages:
-            url = f"{config.base_url}/?searchState={SERVER_FILTER_SEARCH_STATE}&page={page_num}"
+            url = f"{config.base_url}/?searchState={search_state}&page={page_num}"
             print(f"  page {page_num + 1:>4} …", end=" ", flush=True)
 
             page_props, job_urls = await load_page(page, url, playwright_timeout)

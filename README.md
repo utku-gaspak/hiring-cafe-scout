@@ -1,4 +1,4 @@
-# hiring.cafe Job Scraper
+# Interactive hiring.cafe Search CLI
 
 Unlike a basic scraper that just downloads listings and dumps them to a file, this project works as an interactive search tool for [hiring.cafe](https://hiring.cafe). It builds a user-selected search scope, extracts embedded Next.js payload data from a site without a public API, lets you combine manual keywords with payload-derived skills, applies structured filters like seniority/location/commitment, and saves reusable presets for later runs. The built-in preset starts with software-focused roles in Germany or remote Europe and seed terms like `.NET`, `C#`, `ASP.NET`, `TypeScript`, and `React`, while results are exported to `jobs.md` and `jobs.json`, sorted by posting date (newest first).
 
@@ -84,7 +84,7 @@ Output is written to `jobs.md` and `jobs.json` in the same directory unless you 
 
 ## How it works
 
-1. Builds a `?searchState=` query from the resolved config to apply fixed software/IT/engineering categories plus selected seniority buckets server-side.
+1. Builds a `?searchState=` query from the resolved config to apply selected departments plus selected seniority buckets server-side.
 2. Extracts job data from the page's `__NEXT_DATA__` JSON block (no separate API calls needed).
 3. Aggregates payload-derived `technical_tools` across visible results so the interactive wizard can offer live skill selection.
 4. Applies keyword, seniority, commitment, and location filters client-side on each page's results.
@@ -141,7 +141,7 @@ The effective config shape is:
 | Variable | Default | Description |
 |---|---|---|
 | `keywords` | `.NET, C#, ASP.NET, TypeScript, React` | Terms matched in job title, tools, and summary |
-| `departments` | `Software Development, Information Technology, Engineering` | Fixed internal software-job scope used server-side |
+| `departments` | `Software Development, Information Technology, Engineering` | Server-side hiring.cafe department scope; editable in the wizard |
 | `workplace_types` | `Remote, Hybrid, Onsite` | Allowed workplace modes |
 | `allowed_countries` | `DE` | Allowed onsite/hybrid countries |
 | `remote_scopes` | `Europe, Worldwide` | Allowed remote reach |
@@ -168,6 +168,14 @@ The interactive wizard keeps country selection simple:
 - `Custom countries`
 
 `Custom countries` accepts comma-separated country names or ISO codes like `Netherlands, Poland` or `DE, NL`.
+
+The department step starts with:
+
+- `Software Development`
+- `Information Technology`
+- `Engineering`
+
+You can uncheck those defaults or add manual department names before scraping.
 
 ### Filter by cities
 

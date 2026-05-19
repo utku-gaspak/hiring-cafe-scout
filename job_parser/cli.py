@@ -5,7 +5,7 @@ import sys
 
 from job_parser.app import run
 from job_parser.branding import print_logo
-from job_parser.config import SearchConfig, load_search_config, save_search_config
+from job_parser.config import DEFAULT_DEPARTMENTS, SearchConfig, load_search_config, save_search_config
 from job_parser.presets import (
     PRESETS_DIR,
     get_default_config,
@@ -268,7 +268,7 @@ def load_preset_config(slug: str) -> SearchConfig:
 def build_fresh_search_config() -> SearchConfig:
     return SearchConfig(
         keywords=[],
-        departments=[],
+        departments=list(DEFAULT_DEPARTMENTS),
         allowed_countries=[],
         cities=[],
         radius_km=None,

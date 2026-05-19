@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from job_parser.config import CITY_COORDS, SearchConfig
+from job_parser.config import CITY_COORDS, DEFAULT_DEPARTMENTS, SearchConfig
 from job_parser.discovery import discover_filter_catalog
 from job_parser.presets import PRESETS_DIR, save_preset
 
@@ -52,6 +52,7 @@ def collect_config(defaults: SearchConfig | None = None) -> SearchConfig:
 
     catalog = discover_filter_catalog(base.base_url)
     keywords = prompt_search_terms(questionary, style, base.keywords, catalog.skills)
+    departments = prompt_department_editor(questionary, style, base.departments)
     workplace_types = prompt_checkbox(
         questionary,
         style,
@@ -123,6 +124,7 @@ def collect_config(defaults: SearchConfig | None = None) -> SearchConfig:
 
     config = SearchConfig(
         keywords=keywords,
+        departments=departments,
         workplace_types=workplace_types,
         allowed_countries=allowed_countries,
         remote_scopes=remote_scopes,
@@ -170,6 +172,7 @@ def render_summary(config: SearchConfig) -> str:
 
     lines = [
         f"Keywords: {', '.join(config.keywords)}",
+        f"Departments: {', '.join(config.departments)}",
         f"Workplace types: {', '.join(config.workplace_types)}",
         f"Countries: {render_country_scope(config.allowed_countries)}",
         location_detail,
@@ -247,6 +250,54 @@ def prompt_search_terms(questionary, style, default_keywords: list[str], skills:
                 )
                 continue
             return keywords
+
+
+def prompt_department_editor(questionary, style, default_departments: list[str]) -> list[str]:
+    departments = list(default_departments or DEFAULT_DEPARTMENTS)
+    while True:
+        summary = ", ".join(departments[:4]) if departments else "No departments selected"
+        if len(departments) > 4:
+            summary += ", ..."
+        action = questionary.select(
+            "Departments",
+            choices=[
+                questionary.Choice(f"Edit selected departments ({summary})", value="edit"),
+                questionary.Choice("Add a manual department", value="add"),
+                questionary.Choice("Continue", value="continue"),
+            ],
+            style=style,
+            instruction="Use arrows to move, enter to continue",
+        ).ask()
+        if action is None:
+            raise SystemExit(0)
+        if action == "edit":
+            selected = prompt_checkbox(
+                questionary,
+                style,
+                "Toggle the departments you want to keep",
+                departments,
+                departments,
+            )
+            if selected:
+                departments = selected
+            else:
+                questionary.print("Keep at least one department selected.", style="fg:#f7768e")
+            continue
+        if action == "add":
+            new_department = questionary.text(
+                "New department",
+                style=style,
+                validate=lambda value: bool(value.strip()) or "Enter a department.",
+            ).ask()
+            if new_department is None:
+                raise SystemExit(0)
+            normalized = {department.casefold() for department in departments}
+            if new_department.strip().casefold() not in normalized:
+                departments.append(new_department.strip())
+            continue
+        if departments:
+            return departments
+        questionary.print("Keep at least one department selected.", style="fg:#f7768e")
 
 
 def prompt_skill_selector(questionary, style, keywords: list[str], skills: list[str]) -> list[str]:

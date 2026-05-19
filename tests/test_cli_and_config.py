@@ -7,6 +7,7 @@ from pathlib import Path
 
 from job_parser.cli import apply_args_to_config, build_fresh_search_config, build_parser, parse_csv
 from job_parser.config import (
+    DEFAULT_DEPARTMENTS,
     SearchConfig,
     build_search_state,
     build_server_seniority_levels,
@@ -135,7 +136,7 @@ class PresetRegistryTests(unittest.TestCase):
         config = build_fresh_search_config()
 
         self.assertEqual(config.keywords, [])
-        self.assertEqual(config.departments, [])
+        self.assertEqual(config.departments, list(DEFAULT_DEPARTMENTS))
         self.assertEqual(config.workplace_types, ["Remote", "Hybrid", "Onsite"])
         self.assertEqual(config.allowed_countries, [])
         self.assertEqual(config.remote_scopes, ["Europe", "Worldwide"])
@@ -216,14 +217,21 @@ class PresetRegistryTests(unittest.TestCase):
 
 
 class SearchStateTests(unittest.TestCase):
-    def test_search_state_uses_fixed_software_departments(self):
+    def test_search_state_uses_selected_departments(self):
         config = SearchConfig(departments=["Engineering", "Design"])
         search_state = build_search_state(config)
 
-        self.assertIn("Software%20Development", search_state)
         self.assertIn("Engineering", search_state)
+        self.assertIn("Design", search_state)
+        self.assertNotIn("Software%20Development", search_state)
+
+    def test_search_state_falls_back_to_default_departments_when_empty(self):
+        config = SearchConfig(departments=[])
+        search_state = build_search_state(config)
+
+        self.assertIn("Software%20Development", search_state)
         self.assertIn("Information%20Technology", search_state)
-        self.assertNotIn("Design", search_state)
+        self.assertIn("Engineering", search_state)
 
     def test_server_seniority_levels_are_built_from_selected_terms(self):
         config = SearchConfig(

@@ -1,6 +1,6 @@
 # hiring.cafe Job Scraper
 
-Scrapes [hiring.cafe](https://hiring.cafe) for junior/entry-level full-time jobs using a preset-driven CLI. The current built-in preset focuses on software roles in Germany or remote Europe matching `.NET`, `C#`, `ASP.NET`, `TypeScript`, or `React`. Results are saved to `jobs.md` and `jobs.json`, sorted by posting date (newest first).
+Scrapes [hiring.cafe](https://hiring.cafe) for software-focused jobs using a preset-driven CLI. The built-in preset starts with Germany or remote Europe and seed terms like `.NET`, `C#`, `ASP.NET`, `TypeScript`, and `React`, but the interactive flow also lets you select payload-derived skills and broaden seniority beyond entry-level. Results are saved to `jobs.md` and `jobs.json`, sorted by posting date (newest first).
 
 ## Setup
 

@@ -19,6 +19,8 @@ from job_parser.presets import (
     get_default_config,
     list_all_presets,
     list_saved_presets,
+    save_preset,
+    slugify_preset_name,
 )
 
 
@@ -187,6 +189,30 @@ class PresetRegistryTests(unittest.TestCase):
 
         self.assertIn(DEFAULT_PRESET_SLUG, presets)
         self.assertIn("data-eu", presets)
+
+    def test_save_preset_round_trips_full_config(self):
+        config = SearchConfig(
+            keywords=["React", "TypeScript"],
+            allowed_countries=["DE", "NL"],
+            markdown_output="frontend.md",
+            json_output="frontend.json",
+            cities=["Berlin"],
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            preset = save_preset(
+                name="Frontend Berlin",
+                description="Saved from wizard",
+                config=config,
+                directory=temp_dir,
+            )
+            loaded = list_saved_presets(temp_dir)[preset.slug]
+
+        self.assertEqual(preset.slug, "frontend-berlin")
+        self.assertEqual(loaded.config.to_dict(), config.to_dict())
+        self.assertEqual(loaded.description, "Saved from wizard")
+
+    def test_slugify_preset_name_normalizes_filename(self):
+        self.assertEqual(slugify_preset_name("  My Frontend Preset  "), "my-frontend-preset")
 
 
 class SearchStateTests(unittest.TestCase):

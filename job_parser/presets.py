@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from pathlib import Path
+import re
 
 from job_parser.config import SearchConfig
 
@@ -94,3 +95,31 @@ def list_all_presets(directory: str | Path = PRESETS_DIR) -> dict[str, Preset]:
     presets = get_builtin_presets()
     presets.update(list_saved_presets(directory))
     return presets
+
+
+def save_preset(
+    name: str,
+    config: SearchConfig,
+    description: str = "",
+    directory: str | Path = PRESETS_DIR,
+) -> Preset:
+    slug = slugify_preset_name(name)
+    presets_dir = Path(directory)
+    presets_dir.mkdir(parents=True, exist_ok=True)
+    path = presets_dir / f"{slug}.json"
+    payload = {
+        "slug": slug,
+        "name": name.strip(),
+        "description": description.strip(),
+        "config": config.to_dict(),
+    }
+    path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return load_saved_preset_from_path(path)
+
+
+def slugify_preset_name(name: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", name.strip().casefold()).strip("-")
+    return slug or "preset"

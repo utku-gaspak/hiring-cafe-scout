@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from job_parser.config import CITY_COORDS, SearchConfig
-from job_parser.discovery import FilterOption, discover_filter_catalog
+from job_parser.discovery import discover_filter_catalog
+from job_parser.presets import PRESETS_DIR, save_preset
 
 
 WORKPLACE_OPTIONS = ["Remote", "Hybrid", "Onsite"]
@@ -23,6 +24,7 @@ SENIORITY_OPTIONS = [
 REMOTE_SCOPE_OPTIONS = ["Europe", "Worldwide"]
 OUTPUT_OPTIONS = ["Markdown", "JSON"]
 SKILL_PAGE_SIZE = 20
+COUNTRY_SCOPE_OPTIONS = ["Germany", "International", "Custom countries"]
 LOCATION_MODES = [
     "No city filter",
     "Select Germany cities",
@@ -57,7 +59,7 @@ def collect_config(defaults: SearchConfig | None = None) -> SearchConfig:
         WORKPLACE_OPTIONS,
         base.workplace_types,
     )
-    allowed_countries = prompt_country_scope(questionary, style, base.allowed_countries, catalog.countries)
+    allowed_countries = prompt_country_scope(questionary, style, base.allowed_countries)
     location_mode_options = _location_mode_options(allowed_countries)
     location_mode = prompt_select(
         questionary,
@@ -148,6 +150,8 @@ def collect_config(defaults: SearchConfig | None = None) -> SearchConfig:
     ):
         raise SystemExit(0)
 
+    maybe_save_preset(questionary, style, config)
+
     return config
 
 
@@ -167,7 +171,7 @@ def render_summary(config: SearchConfig) -> str:
     lines = [
         f"Keywords: {', '.join(config.keywords)}",
         f"Workplace types: {', '.join(config.workplace_types)}",
-        f"Countries: {', '.join(config.allowed_countries)}",
+        f"Countries: {render_country_scope(config.allowed_countries)}",
         location_detail,
         f"Seniority: {', '.join(config.seniority_terms) or 'none'}"
         + (" + unspecified" if config.include_unspecified_seniority else ""),
@@ -426,36 +430,28 @@ def prompt_skill_selector(questionary, style, keywords: list[str], skills: list[
     return result
 
 
-def prompt_country_scope(questionary, style, default_countries: list[str], options: list[FilterOption]) -> list[str]:
-    if options:
-        selected_labels = {
-            value.casefold()
-            for value in default_countries
-        }
-        default_labels = [
-            option.label
-            for option in options
-            if option.value.casefold() in selected_labels or option.label.casefold() in selected_labels
-        ]
-        selected = prompt_checkbox(
-            questionary,
-            style,
-            "Countries",
-            [option.label for option in options],
-            default_labels,
-        )
-        values_by_label = {option.label: option.value for option in options}
-        return [values_by_label[label] for label in selected]
-
-    countries = questionary.text(
-        "Custom country codes or names",
-        default=",".join(default_countries),
-        style=style,
-        validate=lambda value: bool(csv_values(value)) or "Enter at least one country.",
-    ).ask()
-    if countries is None:
-        raise SystemExit(0)
-    return csv_values(countries)
+def prompt_country_scope(questionary, style, default_countries: list[str]) -> list[str]:
+    default_scope = _default_country_scope(default_countries)
+    scope = prompt_select(
+        questionary,
+        style,
+        "Country scope",
+        COUNTRY_SCOPE_OPTIONS,
+        default_scope,
+    )
+    if scope == "Germany":
+        return ["DE"]
+    if scope == "Custom countries":
+        countries = questionary.text(
+            "Custom country codes or names",
+            default=",".join(default_countries),
+            style=style,
+            validate=lambda value: bool(csv_values(value)) or "Enter at least one country.",
+        ).ask()
+        if countries is None:
+            raise SystemExit(0)
+        return csv_values(countries)
+    return []
 
 
 def prompt_location_details(
@@ -591,8 +587,52 @@ def prompt_yes_no(questionary, style, title: str, default: bool) -> bool:
     return result == "Yes"
 
 
+def maybe_save_preset(questionary, style, config: SearchConfig) -> None:
+    if not prompt_yes_no(
+        questionary,
+        style,
+        f"Save this search as a preset in `{PRESETS_DIR}/`?",
+        default=False,
+    ):
+        return
+
+    preset_name = questionary.text(
+        "Preset name",
+        style=style,
+        validate=lambda value: bool(value.strip()) or "Enter a preset name.",
+    ).ask()
+    if preset_name is None:
+        raise SystemExit(0)
+
+    preset_description = questionary.text(
+        "Preset description (optional)",
+        style=style,
+        default="",
+    ).ask()
+    if preset_description is None:
+        raise SystemExit(0)
+
+    preset = save_preset(
+        name=preset_name.strip(),
+        description=preset_description.strip(),
+        config=config,
+    )
+    questionary.print(
+        f"Saved preset → {preset.path}",
+        style="fg:#9ece6a",
+    )
+
+
 def csv_values(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def render_country_scope(allowed_countries: list[str]) -> str:
+    if not allowed_countries:
+        return "International"
+    if len(allowed_countries) == 1 and _includes_germany(allowed_countries):
+        return "Germany"
+    return ", ".join(allowed_countries)
 
 
 def _default_seniority_labels(config: SearchConfig) -> list[str]:
@@ -633,11 +673,22 @@ def _load_questionary():
 
 
 def _location_mode_options(allowed_countries: list[str]) -> list[str]:
-    normalized = {value.casefold() for value in allowed_countries}
-    includes_germany = "de" in normalized or "germany" in normalized
-    if includes_germany:
+    if _includes_germany(allowed_countries):
         return list(LOCATION_MODES)
     return [
         "No city filter",
         "Enter custom city names",
     ]
+
+
+def _includes_germany(allowed_countries: list[str]) -> bool:
+    normalized = {value.casefold() for value in allowed_countries}
+    return "de" in normalized or "germany" in normalized
+
+
+def _default_country_scope(allowed_countries: list[str]) -> str:
+    if not allowed_countries:
+        return "International"
+    if len(allowed_countries) == 1 and _includes_germany(allowed_countries):
+        return "Germany"
+    return "Custom countries"

@@ -27,7 +27,8 @@ If run in a normal terminal, the app starts with a preset-first interactive flow
 1. choose the built-in preset, a saved preset, or a new search
 2. optionally edit the chosen config
 3. build search terms from manual keywords and/or payload-derived skills
-3. review and start scraping
+4. review and start scraping
+5. optionally save the fully resolved search as a preset in `presets/`
 
 Multi-select steps use:
 
@@ -76,6 +77,8 @@ uv run scraper.py --config search.json --no-interactive
 ```
 
 Saved presets are separate from `--config` files. Presets live in `presets/*.json` and are available from startup selection or with `--preset <slug>`.
+
+When you save a preset from the interactive wizard, it stores the full resolved config, including selected filters and output file paths like `markdown_output` and `json_output`.
 
 Output is written to `jobs.md` and `jobs.json` in the same directory unless you override those paths.
 
@@ -158,11 +161,17 @@ The effective config shape is:
 
 By default the scraper keeps **all jobs in allowed countries** for onsite/hybrid roles plus **remote jobs open to the selected remote scopes**. You can narrow this down with city names or a radius.
 
-Country options in the interactive wizard are discovered from the live payload. If the payload only exposes ISO codes, the CLI normalizes common European codes back to readable country names like `Germany` and `Netherlands`.
+The interactive wizard keeps country selection simple:
+
+- `Germany`
+- `International`
+- `Custom countries`
+
+`Custom countries` accepts comma-separated country names or ISO codes like `Netherlands, Poland` or `DE, NL`.
 
 ### Filter by cities
 
-For the interactive wizard, Germany has a stable built-in city list. If your selected countries include Germany, you can use `Select Germany cities` or a radius around one of the built-in Germany cities. For everything else, use manual city names with the wizard or `--cities`.
+For the interactive wizard, Germany has a stable built-in city list. If your selected country scope includes Germany, you can use `Select Germany cities` or a radius around one of the built-in Germany cities. Otherwise, use manual city names with the wizard or `--cities`.
 
 Partial matches work — `"Munich"` matches `"Munich, Bavaria, DE"`.
 

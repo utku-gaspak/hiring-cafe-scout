@@ -2,6 +2,18 @@
 
 Unlike a basic scraper that just downloads listings and dumps them to a file, this project works as an interactive search tool for [hiring.cafe](https://hiring.cafe). It builds a user-selected search scope, extracts embedded Next.js payload data from a site without a public API, lets you combine manual keywords with payload-derived skills, applies structured filters like seniority/location/commitment, and saves reusable presets for later runs. The built-in preset starts with software-focused roles in Germany or remote Europe and seed terms like `.NET`, `C#`, `ASP.NET`, `TypeScript`, and `React`, while results are exported to `jobs.md` and `jobs.json`, sorted by posting date (newest first).
 
+## Engineering decisions
+
+- **Embedded payload extraction instead of HTML scraping:** hiring.cafe does not expose a public API for this workflow, so the tool reads `__NEXT_DATA__` from the rendered page and works from structured payload data instead of brittle DOM text scraping.
+- **Interactive search flow instead of fixed config only:** the CLI is designed as a reusable search tool, not just a one-off script. Users can combine manual keywords, payload-derived skills, departments, seniority, location filters, and output settings without editing source code.
+- **Server-side narrowing plus client-side filtering:** the scraper pushes departments and broad seniority buckets into `searchState`, then applies stricter keyword, commitment, location, and exact seniority matching locally.
+- **Normalized JSON output in addition to Markdown:** Markdown is useful for quick review, while JSON makes the same run reusable for later ingestion into another tool or database.
+- **Preset-first workflow:** saved presets make repeated searches reproducible and reduce setup friction for common role profiles.
+
+## Demo
+
+![Interactive demo](assets/demo.gif)
+
 ## Setup
 
 **Requirements:** Python 3.12+, [uv](https://github.com/astral-sh/uv)

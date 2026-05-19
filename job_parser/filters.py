@@ -37,19 +37,43 @@ def matches_seniority(job: Job) -> bool:
     return not any(level in seniority for level in SENIOR_LEVELS)
 
 
-def matches_commitment(job: Job) -> bool:
+def matches_seniority_configured(job: Job, config: SearchConfig) -> bool:
+    seniority = job.seniority_level.lower().strip()
+    if not seniority:
+        return config.include_unspecified_seniority
+    if any(level in seniority for level in SENIOR_LEVELS):
+        return False
+    return any(term in seniority for term in config.seniority_terms)
+
+
+def matches_commitment(job: Job, config: SearchConfig) -> bool:
     values = job.commitments or ([job.commitment] if job.commitment else [])
-    return any("full" in value.lower() for value in values)
+    return any(
+        configured.lower() in value.lower()
+        for value in values
+        for configured in config.commitments
+    )
 
 
 def matches_location(job: Job, config: SearchConfig) -> bool:
     work_type = job.work_type.lower()
+    allowed_workplace_types = {value.lower() for value in config.workplace_types}
+
+    if work_type and work_type not in allowed_workplace_types:
+        return False
 
     if "remote" in work_type:
-        if "Europe" in job.continents or job.worldwide_remote:
+        if (
+            "Europe" in job.continents and "Europe" in config.remote_scopes
+        ) or (
+            job.worldwide_remote and "Worldwide" in config.remote_scopes
+        ):
             return True
+        return False
 
-    if "DE" not in job.countries:
+    if config.allowed_countries and not any(
+        country in config.allowed_countries for country in job.countries
+    ):
         return False
 
     if not config.cities and not (config.radius_km and config.radius_city):
@@ -71,4 +95,3 @@ def matches_location(job: Job, config: SearchConfig) -> bool:
         for city in job.cities
         for city_filter in config.cities
     )
-

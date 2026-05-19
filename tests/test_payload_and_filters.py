@@ -4,9 +4,16 @@ import unittest
 from datetime import datetime, timezone
 
 from job_parser.config import SearchConfig
-from job_parser.filters import matches_commitment, matches_keyword, matches_location, matches_seniority
+from job_parser.filters import (
+    matches_commitment,
+    matches_keyword,
+    matches_location,
+    matches_seniority,
+    matches_seniority_configured,
+)
 from job_parser.models import GeoPoint, Job
 from job_parser.payload import parse_job
+from job_parser.wizard import csv_values, render_summary
 
 
 def make_hit(**overrides):
@@ -122,10 +129,19 @@ class FilterTests(unittest.TestCase):
         self.assertFalse(matches_seniority(self.job))
 
     def test_commitment_filter_accepts_full_time_lists(self):
-        self.assertTrue(matches_commitment(self.job))
+        self.assertTrue(matches_commitment(self.job, self.config))
         self.job.commitments = ["Contract"]
         self.job.commitment = "Contract"
-        self.assertFalse(matches_commitment(self.job))
+        self.assertFalse(matches_commitment(self.job, self.config))
+
+    def test_configured_seniority_filter_respects_selection(self):
+        self.assertTrue(matches_seniority_configured(self.job, self.config))
+        self.config.seniority_terms = ["intern"]
+        self.assertFalse(matches_seniority_configured(self.job, self.config))
+        self.job.seniority_level = ""
+        self.assertTrue(matches_seniority_configured(self.job, self.config))
+        self.config.include_unspecified_seniority = False
+        self.assertFalse(matches_seniority_configured(self.job, self.config))
 
     def test_location_filter_allows_remote_europe_and_city_matches(self):
         self.assertTrue(matches_location(self.job, self.config))
@@ -147,6 +163,31 @@ class FilterTests(unittest.TestCase):
         self.config.radius_km = 1
         self.job.geolocations = [GeoPoint(lat=48.137, lon=11.576)]
         self.assertFalse(matches_location(self.job, self.config))
+
+    def test_location_filter_respects_workplace_type_and_remote_scope(self):
+        self.config.workplace_types = ["Hybrid", "Onsite"]
+        self.assertFalse(matches_location(self.job, self.config))
+        self.config.workplace_types = ["Remote"]
+        self.config.remote_scopes = ["Worldwide"]
+        self.assertFalse(matches_location(self.job, self.config))
+
+
+class WizardHelperTests(unittest.TestCase):
+    def test_csv_values_discards_empty_entries(self):
+        self.assertEqual(csv_values("Berlin, Hamburg, ,Munich"), ["Berlin", "Hamburg", "Munich"])
+
+    def test_render_summary_mentions_outputs_and_location_mode(self):
+        config = SearchConfig(
+            keywords=["React"],
+            cities=["Berlin"],
+            export_markdown=True,
+            export_json=False,
+        )
+        summary = render_summary(config)
+
+        self.assertIn("Keywords: React", summary)
+        self.assertIn("Cities: Berlin", summary)
+        self.assertIn("Outputs: Markdown", summary)
 
 
 if __name__ == "__main__":

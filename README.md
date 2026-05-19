@@ -12,7 +12,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Create virtual environment and install dependencies
 uv venv
-uv pip install playwright
+uv pip install -r requirements.txt
 uv run python -m playwright install chromium
 ```
 
@@ -22,7 +22,36 @@ uv run python -m playwright install chromium
 uv run scraper.py
 ```
 
-Output is written to `jobs.md` and `jobs.json` in the same directory.
+If run in a normal terminal, the app starts an interactive setup wizard first. It uses arrow-key selection, checkbox prompts, and a final review step.
+
+To skip the wizard and run with defaults:
+
+```bash
+uv run scraper.py --no-interactive
+```
+
+To run non-interactively with flags:
+
+```bash
+uv run scraper.py \
+  --no-interactive \
+  --keywords ".NET,React" \
+  --workplace-types "Remote,Hybrid" \
+  --countries "DE,NL" \
+  --cities "Berlin,Hamburg" \
+  --commitments "Full Time" \
+  --markdown-output jobs.md \
+  --json-output jobs.json
+```
+
+To save and reuse a preset config:
+
+```bash
+uv run scraper.py --no-interactive --keywords "Python,React" --save-config search.json --save-config-only
+uv run scraper.py --config search.json --no-interactive
+```
+
+Output is written to `jobs.md` and `jobs.json` in the same directory unless you override those paths.
 
 ## How it works
 
@@ -44,15 +73,31 @@ rm seen_ids.txt
 
 ## Configuration
 
-Edit the top of `scraper.py` to adjust:
+You can configure the scraper in three ways:
+
+1. Interactive wizard
+2. Non-interactive CLI flags
+3. JSON config file via `--config`
+
+The effective config shape is:
 
 | Variable | Default | Description |
 |---|---|---|
-| `KEYWORDS` | `.NET, C#, ASP.NET, TypeScript, React` | Terms matched in job title, tools, and summary |
-| `MARKDOWN_OUTPUT` | `jobs.md` | Markdown output file path |
-| `JSON_OUTPUT` | `jobs.json` | Normalized JSON output file path |
-| `SEEN_IDS_FILE` | `seen_ids.txt` | Tracks seen job IDs across runs |
-| `MAX_PAGES` | `500` | Safety ceiling on pages scraped |
+| `keywords` | `.NET, C#, ASP.NET, TypeScript, React` | Terms matched in job title, tools, and summary |
+| `workplace_types` | `Remote, Hybrid, Onsite` | Allowed workplace modes |
+| `allowed_countries` | `DE` | Allowed onsite/hybrid country codes |
+| `remote_scopes` | `Europe, Worldwide` | Allowed remote reach |
+| `seniority_terms` | `entry, junior, associate, intern, graduate` | Allowed non-senior labels |
+| `include_unspecified_seniority` | `true` | Keeps jobs with blank seniority |
+| `commitments` | `Full Time` | Allowed commitment values |
+| `markdown_output` | `jobs.md` | Markdown output file path |
+| `json_output` | `jobs.json` | Normalized JSON output file path |
+| `seen_ids_file` | `seen_ids.txt` | Tracks seen job IDs across runs |
+| `include_seen` | `false` | If true, do not skip previously seen jobs |
+| `max_pages` | `500` | Safety ceiling on pages scraped; `null` means unlimited |
+| `cities` | `[]` | City filter for onsite/hybrid roles |
+| `radius_km` | `null` | Optional radius filter |
+| `radius_city` | `""` | Center city for radius filtering |
 
 ## Location filtering
 

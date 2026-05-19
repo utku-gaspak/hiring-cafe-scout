@@ -143,6 +143,24 @@ class FilterTests(unittest.TestCase):
         self.config.include_unspecified_seniority = False
         self.assertFalse(matches_seniority_configured(self.job, self.config))
 
+    def test_configured_seniority_filter_accepts_mid_and_senior_options(self):
+        self.job.seniority_level = "Mid Level"
+        self.config.seniority_terms = ["mid"]
+        self.config.include_unspecified_seniority = False
+        self.assertTrue(matches_seniority_configured(self.job, self.config))
+
+        self.job.seniority_level = "Senior Level"
+        self.config.seniority_terms = ["senior"]
+        self.assertTrue(matches_seniority_configured(self.job, self.config))
+
+        self.job.seniority_level = "Lead Engineer"
+        self.config.seniority_terms = ["lead"]
+        self.assertTrue(matches_seniority_configured(self.job, self.config))
+
+        self.job.seniority_level = "Principal Engineer"
+        self.config.seniority_terms = ["manager"]
+        self.assertFalse(matches_seniority_configured(self.job, self.config))
+
     def test_location_filter_allows_remote_europe_and_city_matches(self):
         self.assertTrue(matches_location(self.job, self.config))
 

@@ -11,6 +11,10 @@ DEFAULT_DEPARTMENTS = [
     "Information Technology",
     "Engineering",
 ]
+ENTRY_SENIORITY_TERMS = {"entry", "junior", "intern", "graduate"}
+ASSOCIATE_SENIORITY_TERMS = {"associate"}
+MID_SENIORITY_TERMS = {"mid"}
+SENIOR_SENIORITY_TERMS = {"senior", "lead", "principal", "staff", "manager"}
 
 
 @dataclass(slots=True)
@@ -98,12 +102,31 @@ def build_search_state(config: SearchConfig) -> str:
     return quote(
         json.dumps(
             {
-                "seniorityLevel": ["Entry Level"],
+                "seniorityLevel": build_server_seniority_levels(config),
                 "commitmentTypes": ["Full Time"],
                 "departments": DEFAULT_DEPARTMENTS,
             }
         )
     )
+
+
+def build_server_seniority_levels(config: SearchConfig) -> list[str]:
+    selected_terms = {term.casefold() for term in config.seniority_terms}
+    levels: list[str] = []
+
+    if selected_terms & ENTRY_SENIORITY_TERMS:
+        levels.append("Entry Level")
+    if selected_terms & MID_SENIORITY_TERMS:
+        levels.append("Mid Level")
+    if selected_terms & ASSOCIATE_SENIORITY_TERMS:
+        if "Entry Level" not in levels:
+            levels.append("Entry Level")
+        if "Mid Level" not in levels:
+            levels.append("Mid Level")
+    if selected_terms & SENIOR_SENIORITY_TERMS:
+        levels.append("Senior Level")
+
+    return levels or ["Entry Level"]
 
 
 def load_seen_ids(path: str | Path) -> set[str]:

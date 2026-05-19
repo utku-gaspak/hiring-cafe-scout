@@ -26,6 +26,7 @@ If run in a normal terminal, the app starts with a preset-first interactive flow
 
 1. choose the built-in preset, a saved preset, or a new search
 2. optionally edit the chosen config
+3. build search terms from manual keywords and/or payload-derived skills
 3. review and start scraping
 
 Multi-select steps use:
@@ -58,10 +59,10 @@ To run non-interactively with flags:
 uv run scraper.py \
   --no-interactive \
   --keywords ".NET,React" \
-  --departments "Software Development,Engineering" \
   --workplace-types "Remote,Hybrid" \
   --countries "DE,NL" \
   --cities "Berlin,Hamburg" \
+  --seniority-terms "junior,associate,mid" \
   --commitments "Full Time" \
   --markdown-output jobs.md \
   --json-output jobs.json
@@ -80,9 +81,10 @@ Output is written to `jobs.md` and `jobs.json` in the same directory unless you 
 
 ## How it works
 
-1. Builds a `?searchState=` query from the resolved config to apply **Entry Level**, **Full Time**, and selected **departments** server-side.
+1. Builds a `?searchState=` query from the resolved config to apply fixed software/IT/engineering categories plus selected seniority buckets server-side.
 2. Extracts job data from the page's `__NEXT_DATA__` JSON block (no separate API calls needed).
-3. Applies keyword and location filters client-side on each page's results.
+3. Aggregates payload-derived `technical_tools` across visible results so the interactive wizard can offer live skill selection.
+4. Applies keyword, seniority, commitment, and location filters client-side on each page's results.
 4. Skips any job already recorded in `seen_ids.txt` so re-runs only surface new postings.
 5. Saves new matches to `jobs.md` and `jobs.json`, then appends their IDs to `seen_ids.txt`.
 
@@ -126,7 +128,6 @@ Example saved preset:
   "description": "React and TypeScript roles in Berlin",
   "config": {
     "keywords": ["React", "TypeScript"],
-    "departments": ["Software Development", "Engineering"],
     "cities": ["Berlin"]
   }
 }
@@ -137,11 +138,11 @@ The effective config shape is:
 | Variable | Default | Description |
 |---|---|---|
 | `keywords` | `.NET, C#, ASP.NET, TypeScript, React` | Terms matched in job title, tools, and summary |
-| `departments` | `Software Development, Information Technology, Engineering` | Server-side hiring.cafe department scope |
+| `departments` | `Software Development, Information Technology, Engineering` | Fixed internal software-job scope used server-side |
 | `workplace_types` | `Remote, Hybrid, Onsite` | Allowed workplace modes |
-| `allowed_countries` | `DE` | Allowed onsite/hybrid country codes |
+| `allowed_countries` | `DE` | Allowed onsite/hybrid countries |
 | `remote_scopes` | `Europe, Worldwide` | Allowed remote reach |
-| `seniority_terms` | `entry, junior, associate, intern, graduate` | Allowed non-senior labels |
+| `seniority_terms` | `entry, junior, associate, intern, graduate` | Selected seniority labels; can also include `mid`, `senior`, `lead`, `principal`, `staff`, `manager` |
 | `include_unspecified_seniority` | `true` | Keeps jobs with blank seniority |
 | `commitments` | `Full Time` | Allowed commitment values |
 | `markdown_output` | `jobs.md` | Markdown output file path |
@@ -157,9 +158,13 @@ The effective config shape is:
 
 By default the scraper keeps **all jobs in allowed countries** for onsite/hybrid roles plus **remote jobs open to the selected remote scopes**. You can narrow this down with city names or a radius.
 
+Country options in the interactive wizard are discovered from the live payload. If the payload only exposes ISO codes, the CLI normalizes common European codes back to readable country names like `Germany` and `Netherlands`.
+
 ### Filter by cities
 
-Use the interactive wizard or `--cities` to provide city names. Partial matches work — `"Munich"` matches `"Munich, Bavaria, DE"`.
+For the interactive wizard, Germany has a stable built-in city list. If your selected countries include Germany, you can use `Select Germany cities` or a radius around one of the built-in Germany cities. For everything else, use manual city names with the wizard or `--cities`.
+
+Partial matches work — `"Munich"` matches `"Munich, Bavaria, DE"`.
 
 ```bash
 uv run scraper.py --no-interactive --cities "Berlin,Munich,Hamburg"
@@ -230,6 +235,17 @@ The JSON export uses a normalized schema that is intended to be stable enough fo
   ]
 }
 ```
+
+## Interactive search terms
+
+The first interactive step combines manual keywords with payload-derived skills:
+
+- `Browse and select skills` opens a filtered list built from aggregated `ssrHits[*].v5_processed_job_data.technical_tools`
+- skills are deduped across the visible result set and ranked by frequency
+- selected skills move to the top of the list under `Next`
+- you can also add manual keywords if the payload-derived skills are incomplete
+
+The wizard requires at least one selected skill or manual keyword before continuing.
 
 ## Available payload fields
 

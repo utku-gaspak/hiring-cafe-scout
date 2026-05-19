@@ -6,7 +6,12 @@ from job_parser.config import CITY_COORDS, SearchConfig
 from job_parser.models import Job
 
 
-SENIOR_LEVELS = {"senior level", "mid level", "lead", "principal", "staff", "manager"}
+SENIORITY_GROUPS = {
+    "entry": {"entry", "junior", "intern", "graduate"},
+    "associate": {"associate"},
+    "mid": {"mid"},
+    "senior": {"senior", "lead", "principal", "staff", "manager"},
+}
 
 
 def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -34,16 +39,15 @@ def matches_seniority(job: Job) -> bool:
         return True
     if any(level in seniority for level in ("entry", "junior", "associate", "intern", "graduate")):
         return True
-    return not any(level in seniority for level in SENIOR_LEVELS)
+    return not any(level in seniority for level in SENIORITY_GROUPS["senior"] | SENIORITY_GROUPS["mid"])
 
 
 def matches_seniority_configured(job: Job, config: SearchConfig) -> bool:
     seniority = job.seniority_level.lower().strip()
     if not seniority:
         return config.include_unspecified_seniority
-    if any(level in seniority for level in SENIOR_LEVELS):
-        return False
-    return any(term in seniority for term in config.seniority_terms)
+    selected_terms = {term.casefold() for term in config.seniority_terms}
+    return any(term in seniority for term in selected_terms)
 
 
 def matches_commitment(job: Job, config: SearchConfig) -> bool:

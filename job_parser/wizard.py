@@ -6,12 +6,26 @@ from job_parser.discovery import FilterOption, discover_filter_catalog
 
 WORKPLACE_OPTIONS = ["Remote", "Hybrid", "Onsite"]
 COMMITMENT_OPTIONS = ["Full Time", "Part Time", "Contract"]
-SENIORITY_OPTIONS = ["Entry", "Junior", "Associate", "Intern", "Graduate", "Unspecified"]
+SENIORITY_OPTIONS = [
+    "Entry",
+    "Junior",
+    "Associate",
+    "Mid",
+    "Senior",
+    "Lead",
+    "Principal",
+    "Staff",
+    "Manager",
+    "Intern",
+    "Graduate",
+    "Unspecified",
+]
 REMOTE_SCOPE_OPTIONS = ["Europe", "Worldwide"]
 OUTPUT_OPTIONS = ["Markdown", "JSON"]
+SKILL_PAGE_SIZE = 20
 LOCATION_MODES = [
     "No city filter",
-    "Select available locations",
+    "Select Germany cities",
     "Enter custom city names",
     "Use radius filter",
 ]
@@ -25,9 +39,9 @@ def collect_config(defaults: SearchConfig | None = None) -> SearchConfig:
             ("qmark", "fg:#7aa2f7 bold"),
             ("question", "fg:#d8e6b5 bold"),
             ("answer", "fg:#9ece6a bold"),
-            ("pointer", "fg:#e7d79a bold"),
-            ("highlighted", "fg:#e7d79a bold"),
-            ("selected", "fg:#e7d79a"),
+            ("pointer", "fg:#f0b35a bold noreverse"),
+            ("highlighted", "fg:#f0b35a bold noreverse"),
+            ("selected", "fg:#f0b35a noreverse"),
             ("separator", "fg:#565f89"),
             ("instruction", "fg:#7dcfff"),
             ("text", "fg:#d8e6b5"),
@@ -35,8 +49,7 @@ def collect_config(defaults: SearchConfig | None = None) -> SearchConfig:
     )
 
     catalog = discover_filter_catalog(base.base_url)
-    keywords = prompt_keyword_editor(questionary, style, base.keywords)
-    keywords = prompt_skill_selector(questionary, style, keywords, catalog.skills)
+    keywords = prompt_search_terms(questionary, style, base.keywords, catalog.skills)
     workplace_types = prompt_checkbox(
         questionary,
         style,
@@ -45,19 +58,19 @@ def collect_config(defaults: SearchConfig | None = None) -> SearchConfig:
         base.workplace_types,
     )
     allowed_countries = prompt_country_scope(questionary, style, base.allowed_countries, catalog.countries)
+    location_mode_options = _location_mode_options(allowed_countries)
     location_mode = prompt_select(
         questionary,
         style,
         "Location filter",
-        LOCATION_MODES,
-        _default_location_mode(base),
+        location_mode_options,
+        _default_location_mode(base, location_mode_options),
     )
     cities, radius_city, radius_km = prompt_location_details(
         questionary,
         style,
         base,
         location_mode,
-        catalog.locations,
     )
     seniority_labels = prompt_checkbox(
         questionary,
@@ -167,26 +180,32 @@ def render_summary(config: SearchConfig) -> str:
     return "\n".join(lines)
 
 
-def prompt_keyword_editor(questionary, style, default_keywords: list[str]) -> list[str]:
+def prompt_search_terms(questionary, style, default_keywords: list[str], skills: list[str]) -> list[str]:
     keywords = list(default_keywords)
     while True:
-        keyword_summary = ", ".join(keywords) if keywords else "No keywords selected"
+        keyword_summary = ", ".join(keywords[:6]) if keywords else "No terms selected"
+        if len(keywords) > 6:
+            keyword_summary += ", ..."
         choices = []
         if keywords:
             choices.append(
                 questionary.Choice(
-                    f"Edit selected keywords ({keyword_summary})",
+                    f"Edit selected terms ({keyword_summary})",
                     value="edit",
                 )
             )
+        if skills:
+            choices.append(
+                questionary.Choice("Browse and select skills", value="skills")
+            )
         choices.extend(
             [
-                questionary.Choice("Add another keyword", value="add"),
+                questionary.Choice("Add a manual keyword", value="add"),
                 questionary.Choice("Continue", value="continue"),
             ]
         )
         action = questionary.select(
-            "Keywords",
+            "Search Terms",
             choices=choices,
             style=style,
             instruction="Use arrows to move, enter to continue",
@@ -202,7 +221,9 @@ def prompt_keyword_editor(questionary, style, default_keywords: list[str]) -> li
             if selected:
                 keywords = selected
             else:
-                questionary.print("Keep at least one keyword selected.", style="fg:#f7768e")
+                questionary.print("Keep at least one term selected.", style="fg:#f7768e")
+        elif action == "skills":
+            keywords = prompt_skill_selector(questionary, style, keywords, skills)
         elif action == "add":
             new_keyword = questionary.text(
                 "New keyword",
@@ -216,7 +237,10 @@ def prompt_keyword_editor(questionary, style, default_keywords: list[str]) -> li
                 keywords.append(new_keyword.strip())
         else:
             if not keywords:
-                questionary.print("Add at least one keyword before continuing.", style="fg:#f7768e")
+                questionary.print(
+                    "Add at least one skill or manual keyword before continuing.",
+                    style="fg:#f7768e",
+                )
                 continue
             return keywords
 
@@ -264,13 +288,20 @@ def prompt_skill_selector(questionary, style, keywords: list[str], skills: list[
     def current_rows() -> list[tuple[str, str | None]]:
         return [("next", None), *[("skill", skill) for skill in filtered_skills()]]
 
-    def clamp_cursor() -> None:
-        nonlocal cursor
+    def visible_rows() -> tuple[list[tuple[str, str | None]], int, int]:
         rows = current_rows()
-        if not rows:
-            cursor = 0
-            return
-        cursor = max(0, min(cursor, len(rows) - 1))
+        if len(rows) <= 1:
+            return rows, 1, 1
+
+        skill_count = len(rows) - 1
+        total_pages = max(1, (skill_count + SKILL_PAGE_SIZE - 1) // SKILL_PAGE_SIZE)
+        if cursor == 0:
+            page_index = 0
+        else:
+            page_index = min((cursor - 1) // SKILL_PAGE_SIZE, total_pages - 1)
+        start = 1 + page_index * SKILL_PAGE_SIZE
+        end = min(start + SKILL_PAGE_SIZE, len(rows))
+        return [rows[0], *rows[start:end]], page_index + 1, total_pages
 
     def render_prompt():
         summary = selected_skill_summary()
@@ -278,7 +309,8 @@ def prompt_skill_selector(questionary, style, keywords: list[str], skills: list[
         if summary:
             title = f"Skills ({summary})"
 
-        rows = current_rows()
+        all_rows = current_rows()
+        rows, current_page, total_pages = visible_rows()
         if not rows:
             rows = [("next", None)]
 
@@ -291,9 +323,17 @@ def prompt_skill_selector(questionary, style, keywords: list[str], skills: list[
             ("", "\n\n"),
         ]
 
+        if len(all_rows) > 1:
+            text.extend(
+                [
+                    ("class:text", f"Page {current_page}/{total_pages}"),
+                    ("", "\n\n"),
+                ]
+            )
+
         selected_set = {value.casefold() for value in selected}
-        for index, (row_type, value) in enumerate(rows):
-            is_active = index == cursor
+        for row_type, value in rows:
+            is_active = (row_type, value) == current_rows()[cursor]
             marker_style = "class:pointer" if is_active else "class:text"
             label_style = "class:highlighted" if is_active else "class:text"
             pointer = "» " if is_active else "  "
@@ -423,17 +463,16 @@ def prompt_location_details(
     style,
     base: SearchConfig,
     location_mode: str,
-    discovered_locations: list[str],
 ) -> tuple[list[str], str, int | None]:
     if location_mode == "No city filter":
         return [], "", None
-    if location_mode == "Select available locations":
+    if location_mode == "Select Germany cities":
         cities = prompt_checkbox(
             questionary,
             style,
-            "Select available locations",
-            _merge_location_defaults(discovered_locations, base.cities),
-            [city for city in base.cities if city in discovered_locations],
+            "Select Germany cities",
+            list(CITY_COORDS.keys()),
+            [city for city in base.cities if city in CITY_COORDS],
         )
         return cities, "", None
     if location_mode == "Enter custom city names":
@@ -572,12 +611,14 @@ def _default_outputs(config: SearchConfig) -> list[str]:
     return outputs
 
 
-def _default_location_mode(config: SearchConfig) -> str:
+def _default_location_mode(config: SearchConfig, allowed_modes: list[str]) -> str:
     if config.radius_km and config.radius_city:
-        return "Use radius filter"
+        preferred = "Use radius filter"
+        return preferred if preferred in allowed_modes else allowed_modes[0]
     if config.cities:
-        return "Select available locations"
-    return "No city filter"
+        preferred = "Select Germany cities" if any(city in CITY_COORDS for city in config.cities) else "Enter custom city names"
+        return preferred if preferred in allowed_modes else allowed_modes[0]
+    return "No city filter" if "No city filter" in allowed_modes else allowed_modes[0]
 
 
 def _load_questionary():
@@ -591,11 +632,12 @@ def _load_questionary():
     return questionary
 
 
-def _merge_location_defaults(discovered: list[str], selected: list[str]) -> list[str]:
-    values = list(discovered)
-    seen = {value.casefold() for value in values}
-    for value in selected:
-        if value.casefold() not in seen:
-            values.append(value)
-            seen.add(value.casefold())
-    return values
+def _location_mode_options(allowed_countries: list[str]) -> list[str]:
+    normalized = {value.casefold() for value in allowed_countries}
+    includes_germany = "de" in normalized or "germany" in normalized
+    if includes_germany:
+        return list(LOCATION_MODES)
+    return [
+        "No city filter",
+        "Enter custom city names",
+    ]

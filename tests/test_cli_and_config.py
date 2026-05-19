@@ -6,7 +6,13 @@ import unittest
 from pathlib import Path
 
 from job_parser.cli import apply_args_to_config, build_fresh_search_config, build_parser, parse_csv
-from job_parser.config import SearchConfig, build_search_state, load_search_config, save_search_config
+from job_parser.config import (
+    SearchConfig,
+    build_search_state,
+    build_server_seniority_levels,
+    load_search_config,
+    save_search_config,
+)
 from job_parser.presets import (
     DEFAULT_PRESET_SLUG,
     get_builtin_preset,
@@ -128,12 +134,15 @@ class PresetRegistryTests(unittest.TestCase):
 
         self.assertEqual(config.keywords, [])
         self.assertEqual(config.departments, [])
-        self.assertEqual(config.workplace_types, [])
+        self.assertEqual(config.workplace_types, ["Remote", "Hybrid", "Onsite"])
         self.assertEqual(config.allowed_countries, [])
-        self.assertEqual(config.remote_scopes, [])
-        self.assertEqual(config.seniority_terms, [])
-        self.assertFalse(config.include_unspecified_seniority)
-        self.assertEqual(config.commitments, [])
+        self.assertEqual(config.remote_scopes, ["Europe", "Worldwide"])
+        self.assertEqual(
+            config.seniority_terms,
+            ["entry", "junior", "associate", "intern", "graduate"],
+        )
+        self.assertTrue(config.include_unspecified_seniority)
+        self.assertEqual(config.commitments, ["Full Time"])
         self.assertTrue(config.export_markdown)
         self.assertTrue(config.export_json)
 
@@ -189,6 +198,28 @@ class SearchStateTests(unittest.TestCase):
         self.assertIn("Engineering", search_state)
         self.assertIn("Information%20Technology", search_state)
         self.assertNotIn("Design", search_state)
+
+    def test_server_seniority_levels_are_built_from_selected_terms(self):
+        config = SearchConfig(
+            seniority_terms=["entry", "associate", "senior", "manager"],
+            include_unspecified_seniority=False,
+        )
+
+        self.assertEqual(
+            build_server_seniority_levels(config),
+            ["Entry Level", "Mid Level", "Senior Level"],
+        )
+
+    def test_search_state_uses_selected_seniority_levels(self):
+        config = SearchConfig(
+            seniority_terms=["mid", "senior"],
+            include_unspecified_seniority=False,
+        )
+        search_state = build_search_state(config)
+
+        self.assertIn("Mid%20Level", search_state)
+        self.assertIn("Senior%20Level", search_state)
+        self.assertNotIn("Entry%20Level", search_state)
 
 
 if __name__ == "__main__":

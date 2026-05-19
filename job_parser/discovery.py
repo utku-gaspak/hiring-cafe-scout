@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections import Counter
 import json
 import re
 from html import unescape
@@ -39,6 +40,38 @@ SKILL_TERMS = {
     "github actions",
     "docker",
     "kubernetes",
+}
+COUNTRY_LABELS = {
+    "AT": "Austria",
+    "BE": "Belgium",
+    "BG": "Bulgaria",
+    "CH": "Switzerland",
+    "CY": "Cyprus",
+    "CZ": "Czech Republic",
+    "DE": "Germany",
+    "DK": "Denmark",
+    "EE": "Estonia",
+    "ES": "Spain",
+    "FI": "Finland",
+    "FR": "France",
+    "GB": "United Kingdom",
+    "GR": "Greece",
+    "HR": "Croatia",
+    "HU": "Hungary",
+    "IE": "Ireland",
+    "IT": "Italy",
+    "LT": "Lithuania",
+    "LU": "Luxembourg",
+    "LV": "Latvia",
+    "MT": "Malta",
+    "NL": "Netherlands",
+    "NO": "Norway",
+    "PL": "Poland",
+    "PT": "Portugal",
+    "RO": "Romania",
+    "SE": "Sweden",
+    "SI": "Slovenia",
+    "SK": "Slovakia",
 }
 
 
@@ -113,12 +146,13 @@ def extract_departments_from_payload(payload: dict) -> list[str]:
 
 
 def extract_countries_from_payload(payload: dict) -> list[FilterOption]:
-    return _extract_best_option_candidate(
+    options = _extract_best_option_candidate(
         payload,
         keyword="country",
         preferred_values=[],
         extra_keywords=("countries",),
     )
+    return [_normalize_country_option(option) for option in options]
 
 
 def extract_locations_from_payload(payload: dict) -> list[str]:
@@ -131,6 +165,9 @@ def extract_locations_from_payload(payload: dict) -> list[str]:
 
 
 def extract_skills_from_payload(payload: dict) -> list[str]:
+    aggregated = _extract_skills_from_hits(payload)
+    if aggregated:
+        return aggregated
     candidates = _collect_skill_candidates(payload)
     if not candidates:
         return []
@@ -247,6 +284,52 @@ def _score_skill_candidate(path: tuple[str, ...], values: list[str]) -> int:
     if len(values) >= 5:
         score += min(len(values), 50)
     return score
+
+
+def _extract_skills_from_hits(payload: dict) -> list[str]:
+    hits = (
+        payload.get("props", {})
+        .get("pageProps", {})
+        .get("ssrHits", [])
+    )
+    if not isinstance(hits, list):
+        return []
+
+    counts: Counter[str] = Counter()
+    display_by_key: dict[str, str] = {}
+    first_seen: dict[str, int] = {}
+    order = 0
+
+    for hit in hits:
+        if not isinstance(hit, dict):
+            continue
+        technical_tools = (
+            hit.get("v5_processed_job_data", {})
+            .get("technical_tools", [])
+        )
+        if not isinstance(technical_tools, list):
+            continue
+        seen_in_hit: set[str] = set()
+        for raw in technical_tools:
+            if not isinstance(raw, str):
+                continue
+            skill = raw.strip()
+            if not _is_readable_label(skill):
+                continue
+            key = skill.casefold()
+            if key in seen_in_hit:
+                continue
+            seen_in_hit.add(key)
+            counts[key] += 1
+            display_by_key.setdefault(key, skill)
+            first_seen.setdefault(key, order)
+            order += 1
+
+    ranked = sorted(
+        counts,
+        key=lambda key: (-counts[key], first_seen[key], display_by_key[key].casefold()),
+    )
+    return [display_by_key[key] for key in ranked]
 
 
 def _score_candidate(
@@ -366,3 +449,14 @@ def _collect_skill_candidates(payload: dict) -> list[tuple[int, list[FilterOptio
     visit(payload, tuple())
     candidates.sort(key=lambda item: (item[0], len(item[1])), reverse=True)
     return candidates
+
+
+def _normalize_country_option(option: FilterOption) -> FilterOption:
+    value = option.value.strip().upper()
+    label = option.label.strip()
+    if value in COUNTRY_LABELS:
+        return FilterOption(label=COUNTRY_LABELS[value], value=value)
+    upper_label = label.upper()
+    if upper_label in COUNTRY_LABELS:
+        return FilterOption(label=COUNTRY_LABELS[upper_label], value=upper_label)
+    return option

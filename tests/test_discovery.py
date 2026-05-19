@@ -50,9 +50,9 @@ class DiscoveryTests(unittest.TestCase):
                 "pageProps": {
                     "filters": {
                         "countries": [
-                            {"label": "Germany", "value": "DE"},
-                            {"label": "Netherlands", "value": "NL"},
-                            {"label": "Poland", "value": "PL"},
+                            {"label": "DE", "value": "DE"},
+                            {"label": "NL", "value": "NL"},
+                            {"label": "PL", "value": "PL"},
                         ]
                     }
                 }
@@ -166,6 +166,35 @@ class DiscoveryTests(unittest.TestCase):
             skills,
             ["Nest.js", "Express.js", "GraphQL", "React", "TypeScript", "Docker", "Kubernetes"],
         )
+
+    def test_extract_skills_aggregates_across_ssr_hits(self):
+        payload = {
+            "props": {
+                "pageProps": {
+                    "ssrHits": [
+                        {
+                            "v5_processed_job_data": {
+                                "technical_tools": ["Python", "Docker", "AWS", "Python"],
+                            }
+                        },
+                        {
+                            "v5_processed_job_data": {
+                                "technical_tools": ["Python", "Terraform", "AWS"],
+                            }
+                        },
+                        {
+                            "v5_processed_job_data": {
+                                "technical_tools": ["Go", "Docker"],
+                            }
+                        },
+                    ]
+                }
+            }
+        }
+
+        skills = extract_skills_from_payload(payload)
+
+        self.assertEqual(skills, ["Python", "Docker", "AWS", "Terraform", "Go"])
 
 
 if __name__ == "__main__":

@@ -4,16 +4,35 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from urllib.parse import unquote_plus
 
-from job_parser.cli import apply_args_to_config, build_fresh_search_config, build_parser, parse_csv
+from job_parser.cli import apply_args_to_config, build_parser, parse_csv
 from job_parser.config import (
-    DEFAULT_DEPARTMENTS,
+    HIRING_CAFE_ENTRY_SENIORITY_LEVELS,
+    HIRING_CAFE_SENIOR_SENIORITY_LEVELS,
     SearchConfig,
     build_search_state,
-    build_server_seniority_levels,
+    parse_search_url,
     load_search_config,
     save_search_config,
 )
+
+
+GERMANY_LOCATION = {
+    "id": "ZhY1yZQBoEtHp_8UEq3V",
+    "types": ["country"],
+    "address_components": [
+        {
+            "long_name": "Germany",
+            "short_name": "DE",
+            "types": ["country"],
+        }
+    ],
+    "formatted_address": "Germany",
+    "population": 82927922,
+    "workplace_types": [],
+    "options": {"flexible_regions": ["anywhere_in_continent", "anywhere_in_world"]},
+}
 from job_parser.presets import (
     DEFAULT_PRESET_SLUG,
     delete_saved_preset,
@@ -30,7 +49,6 @@ class ConfigRoundTripTests(unittest.TestCase):
     def test_search_config_round_trips_to_json_file(self):
         config = SearchConfig(
             keywords=["python", "react"],
-            departments=["Software Development", "Engineering"],
             workplace_types=["Remote"],
             allowed_countries=["DE", "NL"],
             remote_scopes=["Worldwide"],
@@ -44,6 +62,8 @@ class ConfigRoundTripTests(unittest.TestCase):
             include_seen=True,
             max_pages=None,
             cities=["Berlin"],
+            session_state_file="browser-session.json",
+            browser_profile_dir="browser-profile",
         )
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "config.json"
@@ -61,9 +81,10 @@ class CliConfigTests(unittest.TestCase):
         parser = build_parser()
         args = parser.parse_args(
             [
-                "--no-interactive",
                 "--keywords",
                 "python,go",
+                "--url",
+                "https://hiring.cafe/?searchState=%7B%22searchQuery%22%3A%22java%22%7D",
                 "--workplace-types",
                 "Remote,Hybrid",
                 "--countries",
@@ -84,6 +105,10 @@ class CliConfigTests(unittest.TestCase):
                 "out.md",
                 "--json-output",
                 "out.json",
+                "--session-state",
+                "session.json",
+                "--browser-profile-dir",
+                "browser-profile",
                 "--no-markdown",
             ]
         )
@@ -91,6 +116,7 @@ class CliConfigTests(unittest.TestCase):
         config = apply_args_to_config(SearchConfig(), args)
 
         self.assertEqual(config.keywords, ["python", "go"])
+        self.assertEqual(config.search_url, "https://hiring.cafe/?searchState=%7B%22searchQuery%22%3A%22java%22%7D")
         self.assertEqual(config.workplace_types, ["Remote", "Hybrid"])
         self.assertEqual(config.allowed_countries, ["DE", "NL"])
         self.assertEqual(config.cities, ["Berlin", "Hamburg"])
@@ -102,6 +128,8 @@ class CliConfigTests(unittest.TestCase):
         self.assertTrue(config.include_seen)
         self.assertEqual(config.markdown_output, "out.md")
         self.assertEqual(config.json_output, "out.json")
+        self.assertEqual(config.session_state_file, "session.json")
+        self.assertEqual(config.browser_profile_dir, "browser-profile")
         self.assertFalse(config.export_markdown)
         self.assertTrue(config.export_json)
 
@@ -114,6 +142,32 @@ class CliConfigTests(unittest.TestCase):
         self.assertIsInstance(decoded, dict)
         self.assertEqual(decoded["keywords"], ["rust"])
 
+    def test_parse_search_url_extracts_search_state(self):
+        self.assertEqual(
+            parse_search_url("https://hiring.cafe/?searchState=%7B%22searchQuery%22%3A%22java%22%7D"),
+            "%7B%22searchQuery%22%3A%22java%22%7D",
+        )
+        self.assertIsNone(parse_search_url("https://hiring.cafe/jobs"))
+
+    def test_config_from_dict_preserves_explicit_empty_filters(self):
+        config = SearchConfig.from_dict(
+            {
+                "keywords": ["C#"],
+                "workplace_types": [],
+                "allowed_countries": [],
+                "remote_scopes": [],
+                "seniority_terms": [],
+                "commitments": [],
+            }
+        )
+
+        self.assertEqual(config.keywords, ["C#"])
+        self.assertEqual(config.workplace_types, [])
+        self.assertEqual(config.allowed_countries, [])
+        self.assertEqual(config.remote_scopes, [])
+        self.assertEqual(config.seniority_terms, [])
+        self.assertEqual(config.commitments, [])
+
 
 class PresetRegistryTests(unittest.TestCase):
     def test_builtin_default_preset_exists(self):
@@ -121,10 +175,14 @@ class PresetRegistryTests(unittest.TestCase):
 
         self.assertEqual(preset.slug, DEFAULT_PRESET_SLUG)
         self.assertTrue(preset.builtin)
+        self.assertEqual(preset.config.keywords, ["C#"])
+        self.assertEqual(preset.config.workplace_types, [])
+        self.assertEqual(preset.config.allowed_countries, [])
         self.assertEqual(
-            preset.config.keywords,
-            [".NET", "C#", "ASP.NET", "TypeScript", "React"],
+            preset.config.seniority_terms,
+            ["entry", "junior", "associate", "intern", "graduate", "mid"],
         )
+        self.assertEqual(preset.config.commitments, [])
 
     def test_default_config_returns_detached_copy(self):
         config = get_default_config()
@@ -133,22 +191,17 @@ class PresetRegistryTests(unittest.TestCase):
 
         self.assertNotIn("Python", fresh_config.keywords)
 
-    def test_fresh_search_config_does_not_inherit_preset_filters(self):
-        config = build_fresh_search_config()
+    def test_default_config_uses_entry_level_filter_only(self):
+        config = get_default_config()
 
-        self.assertEqual(config.keywords, [])
-        self.assertEqual(config.departments, list(DEFAULT_DEPARTMENTS))
-        self.assertEqual(config.workplace_types, ["Remote", "Hybrid", "Onsite"])
+        self.assertEqual(config.keywords, ["C#"])
+        self.assertEqual(config.workplace_types, [])
         self.assertEqual(config.allowed_countries, [])
-        self.assertEqual(config.remote_scopes, ["Europe", "Worldwide"])
         self.assertEqual(
             config.seniority_terms,
-            ["entry", "junior", "associate", "intern", "graduate"],
+            ["entry", "junior", "associate", "intern", "graduate", "mid"],
         )
-        self.assertTrue(config.include_unspecified_seniority)
-        self.assertEqual(config.commitments, ["Full Time"])
-        self.assertTrue(config.export_markdown)
-        self.assertTrue(config.export_json)
+        self.assertEqual(config.commitments, [])
 
     def test_saved_presets_are_loaded_from_directory(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -203,7 +256,7 @@ class PresetRegistryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             preset = save_preset(
                 name="Frontend Berlin",
-                description="Saved from wizard",
+                description="Saved preset",
                 config=config,
                 directory=temp_dir,
             )
@@ -211,7 +264,7 @@ class PresetRegistryTests(unittest.TestCase):
 
         self.assertEqual(preset.slug, "frontend-berlin")
         self.assertEqual(loaded.config.to_dict(), config.to_dict())
-        self.assertEqual(loaded.description, "Saved from wizard")
+        self.assertEqual(loaded.description, "Saved preset")
 
     def test_slugify_preset_name_normalizes_filename(self):
         self.assertEqual(slugify_preset_name("  My Frontend Preset  "), "my-frontend-preset")
@@ -233,43 +286,56 @@ class PresetRegistryTests(unittest.TestCase):
 
 
 class SearchStateTests(unittest.TestCase):
-    def test_search_state_uses_selected_departments(self):
-        config = SearchConfig(departments=["Engineering", "Design"])
+    def test_search_state_uses_query_seniority_and_country_only(self):
+        config = SearchConfig(keywords=["C#", ".NET"], allowed_countries=["DE"])
+        search_state = json.loads(unquote_plus(build_search_state(config)))
+
+        self.assertEqual(search_state["searchQuery"], "C# .NET")
+        self.assertEqual(search_state["technologyKeywordsQuery"], '"C#" AND ".NET"')
+        self.assertEqual(search_state["seniorityLevel"], HIRING_CAFE_ENTRY_SENIORITY_LEVELS)
+        self.assertEqual(search_state["locations"][0], GERMANY_LOCATION)
+        self.assertNotIn("workplaceTypes", search_state)
+        self.assertNotIn("commitmentTypes", search_state)
+        self.assertNotIn("departments", search_state)
+
+    def test_search_state_uses_other_scope_by_default(self):
+        config = SearchConfig(keywords=[], allowed_countries=[])
         search_state = build_search_state(config)
-
-        self.assertIn("Engineering", search_state)
-        self.assertIn("Design", search_state)
-        self.assertNotIn("Software%20Development", search_state)
-
-    def test_search_state_falls_back_to_default_departments_when_empty(self):
-        config = SearchConfig(departments=[])
-        search_state = build_search_state(config)
-
-        self.assertIn("Software%20Development", search_state)
-        self.assertIn("Information%20Technology", search_state)
-        self.assertIn("Engineering", search_state)
-
-    def test_server_seniority_levels_are_built_from_selected_terms(self):
-        config = SearchConfig(
-            seniority_terms=["entry", "associate", "senior", "manager"],
-            include_unspecified_seniority=False,
-        )
 
         self.assertEqual(
-            build_server_seniority_levels(config),
-            ["Entry Level", "Mid Level", "Senior Level"],
+            json.loads(unquote_plus(search_state)),
+            {"seniorityLevel": HIRING_CAFE_ENTRY_SENIORITY_LEVELS},
         )
 
-    def test_search_state_uses_selected_seniority_levels(self):
-        config = SearchConfig(
-            seniority_terms=["mid", "senior"],
-            include_unspecified_seniority=False,
-        )
-        search_state = build_search_state(config)
+    def test_search_state_omits_seniority_when_terms_are_empty(self):
+        config = SearchConfig(keywords=["java"], allowed_countries=[], seniority_terms=[])
+        search_state = json.loads(unquote_plus(build_search_state(config)))
 
-        self.assertIn("Mid%20Level", search_state)
-        self.assertIn("Senior%20Level", search_state)
-        self.assertNotIn("Entry%20Level", search_state)
+        self.assertEqual(search_state, {"searchQuery": "java"})
+
+    def test_search_state_uses_technology_keywords_query_for_comma_separated_keywords(self):
+        config = SearchConfig(keywords=["Java", "Spring Boot"], allowed_countries=[], seniority_terms=[])
+        search_state = json.loads(unquote_plus(build_search_state(config)))
+
+        self.assertEqual(
+            search_state,
+            {
+                "searchQuery": "Java Spring Boot",
+                "technologyKeywordsQuery": '"Java" AND "Spring Boot"',
+            },
+        )
+
+    def test_search_state_uses_senior_level_when_terms_are_senior(self):
+        config = SearchConfig(keywords=["java"], allowed_countries=[], seniority_terms=["senior"])
+        search_state = json.loads(unquote_plus(build_search_state(config)))
+
+        self.assertEqual(
+            search_state,
+            {
+                "searchQuery": "java",
+                "seniorityLevel": HIRING_CAFE_SENIOR_SENIORITY_LEVELS,
+            },
+        )
 
 
 if __name__ == "__main__":

@@ -71,9 +71,9 @@ Module responsibilities:
   - normalized internal data models
   - should define a stable `Job` model and a `SearchConfig` model
 
-- `scraper.py`
-  - Playwright browser lifecycle
-  - page loading
+- `browser_scraper.py`
+  - Pydoll browser-context requests
+  - challenge-aware browser session reuse
   - pagination
 
 - `payload.py`
@@ -547,6 +547,40 @@ Before implementing configurable departments, keep this separation clear:
   - remote scope
 
 This distinction matters because server-side filters reduce the result set upstream, while client-side filters only evaluate jobs that have already been fetched.
+
+## Cloudflare access strategy
+
+The codebase now uses two separate request paths:
+
+1. Direct HTTP via `curl-cffi` for the fast path.
+2. Pydoll browser-context requests for the Cloudflare fallback path.
+
+The reason Pydoll is the right fallback is that it keeps the request inside the same browser session:
+
+- the user can solve the challenge in a visible Chromium window
+- `tab.request` inherits the browser cookies and session state automatically
+- the API calls do not need cookie flattening or transfer into a separate HTTP client
+
+Current implementation shape:
+
+- `api.py`
+  - still handles the direct JSON endpoints
+  - still raises `CloudflareChallenge` when the edge returns a challenge
+- `browser_scraper.py`
+  - opens Chromium through Pydoll
+  - lets the user solve the challenge in the same browser session
+  - calls the HiringCafe API through `tab.request.post(...)`
+- `app.py`
+  - uses the direct API path first
+  - falls back to Pydoll browser-context requests when Cloudflare blocks the direct path
+
+The old Playwright storage-state export path is now a secondary diagnostic tool, not the primary scraping strategy.
+
+If Cloudflare still blocks both the direct HTTP path and the browser-context path, the remaining options are:
+
+- use a real browser profile that already has access
+- change the upstream data source
+- stop attempting a live scrape from this environment
 
 ## Architecture note for presets
 

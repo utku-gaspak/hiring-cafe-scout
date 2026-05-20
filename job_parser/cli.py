@@ -1,20 +1,16 @@
 from __future__ import annotations
 
 import argparse
-import sys
 
 from job_parser.app import run
 from job_parser.branding import print_logo
-from job_parser.config import DEFAULT_DEPARTMENTS, SearchConfig, load_search_config, save_search_config
+from job_parser.config import SearchConfig, load_search_config, save_search_config
 from job_parser.presets import (
-    PRESETS_DIR,
     delete_saved_preset,
     get_default_config,
-    get_default_preset,
     list_all_presets,
-    list_saved_presets,
 )
-from job_parser.wizard import collect_config
+from job_parser.session_export import export_session_state
 
 
 def main() -> None:
@@ -37,12 +33,12 @@ def main() -> None:
     else:
         base_config = get_default_config()
 
-    if args.interactive:
-        config = collect_config(base_config)
-    elif should_use_non_interactive_config(args):
-        config = apply_args_to_config(base_config, args)
-    else:
-        config = resolve_interactive_start()
+    if args.export_session_state:
+        export_url = args.session_state_url or base_config.base_url
+        export_session_state(args.export_session_state, export_url)
+        return
+
+    config = apply_args_to_config(base_config, args)
 
     if args.save_config:
         save_search_config(args.save_config, config)
@@ -57,12 +53,6 @@ def main() -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Scrape hiring.cafe job listings.")
-    parser.add_argument("--interactive", action="store_true", help="Force the interactive setup wizard.")
-    parser.add_argument(
-        "--no-interactive",
-        action="store_true",
-        help="Run from flags and/or config without the interactive setup wizard.",
-    )
     parser.add_argument("--preset", help="Load a built-in or saved preset by slug.")
     parser.add_argument("--list-presets", action="store_true", help="List available presets and exit.")
     parser.add_argument("--delete-preset", help="Delete a saved preset by slug and exit.")
@@ -74,6 +64,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Save the resolved config and exit without scraping.",
     )
     parser.add_argument("--keywords", help="Comma-separated keywords.")
+    parser.add_argument(
+        "--url",
+        help="HiringCafe search URL containing searchState. When set, it becomes the source of truth.",
+    )
     parser.add_argument("--workplace-types", help="Comma-separated workplace types.")
     parser.add_argument("--countries", help="Comma-separated ISO country codes.")
     parser.add_argument("--cities", help="Comma-separated city filters.")
@@ -91,45 +85,25 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--include-seen", action="store_true", help="Include jobs already present in seen_ids.txt.")
     parser.add_argument("--markdown-output", help="Markdown output file path.")
     parser.add_argument("--json-output", help="JSON output file path.")
+    parser.add_argument(
+        "--session-state",
+        help="Path to a browser storage-state JSON file or cookie file for Cloudflare session reuse.",
+    )
+    parser.add_argument(
+        "--browser-profile-dir",
+        help="Persist and reuse a real browser profile directory for scraping.",
+    )
+    parser.add_argument(
+        "--export-session-state",
+        help="Open a real browser, then save the authenticated storage state to this path and exit.",
+    )
+    parser.add_argument(
+        "--session-state-url",
+        help="URL to open before saving the browser session state. Defaults to the configured base URL.",
+    )
     parser.add_argument("--no-markdown", action="store_true", help="Disable markdown output.")
     parser.add_argument("--no-json", action="store_true", help="Disable JSON output.")
     return parser
-
-
-def should_use_non_interactive_config(args: argparse.Namespace) -> bool:
-    return (
-        args.no_interactive
-        or args.config is not None
-        or has_cli_overrides(args)
-        or not sys.stdin.isatty()
-    )
-
-
-def has_cli_overrides(args: argparse.Namespace) -> bool:
-    return any(
-        value
-        for value in [
-            args.preset,
-            args.keywords,
-            args.workplace_types,
-            args.countries,
-            args.cities,
-            args.radius_city,
-            args.radius_km is not None,
-            args.remote_scopes,
-            args.seniority_terms,
-            args.no_unspecified_seniority,
-            args.commitments,
-            args.max_pages is not None,
-            args.include_seen,
-            args.markdown_output,
-            args.json_output,
-            args.no_markdown,
-            args.no_json,
-            args.save_config,
-            args.save_config_only,
-        ]
-    )
 
 
 def apply_args_to_config(base: SearchConfig, args: argparse.Namespace) -> SearchConfig:
@@ -137,6 +111,8 @@ def apply_args_to_config(base: SearchConfig, args: argparse.Namespace) -> Search
 
     if args.keywords:
         config.keywords = parse_csv(args.keywords)
+    if args.url:
+        config.search_url = args.url
     if args.workplace_types:
         config.workplace_types = parse_csv(args.workplace_types)
     if args.countries:
@@ -166,6 +142,10 @@ def apply_args_to_config(base: SearchConfig, args: argparse.Namespace) -> Search
         config.markdown_output = args.markdown_output
     if args.json_output:
         config.json_output = args.json_output
+    if args.session_state is not None:
+        config.session_state_file = args.session_state
+    if args.browser_profile_dir is not None:
+        config.browser_profile_dir = args.browser_profile_dir
     if args.no_markdown:
         config.export_markdown = False
     if args.no_json:
@@ -181,124 +161,6 @@ def parse_csv(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
-def resolve_interactive_start() -> SearchConfig:
-    questionary = _load_questionary()
-    style = questionary.Style(
-        [
-            ("qmark", "fg:#7fbbb3 bold"),
-            ("question", "fg:#d3c6aa bold"),
-            ("answer", "fg:#a7c080 bold"),
-            ("pointer", "fg:#e69875 bold noreverse"),
-            ("highlighted", "fg:#e69875 bold noreverse"),
-            ("selected", "fg:#dbbc7f noreverse"),
-            ("instruction", "fg:#83c092"),
-            ("text", "fg:#d3c6aa"),
-        ]
-    )
-
-    startup_choice = questionary.select(
-        "Choose how to start",
-        choices=[
-            questionary.Choice(
-                f"Use built-in preset: {get_default_preset().name}",
-                value="builtin",
-            ),
-            questionary.Choice("Use saved preset", value="saved"),
-            questionary.Choice("Delete saved preset", value="delete"),
-            questionary.Choice("Create new search", value="new"),
-        ],
-        style=style,
-        instruction="Use arrows to move, enter to continue",
-    ).ask()
-    if startup_choice is None:
-        raise SystemExit(0)
-
-    if startup_choice == "builtin":
-        return choose_preset_action(get_default_config(), get_default_preset().name, style)
-    if startup_choice == "saved":
-        saved_presets = list_saved_presets()
-        if not saved_presets:
-            questionary.print(
-                f"No saved presets found in `{PRESETS_DIR}/`. Starting a new search instead.",
-                style="fg:#e69875",
-            )
-            return collect_config(build_fresh_search_config())
-        preset_slug = questionary.select(
-            "Saved presets",
-            choices=[
-                questionary.Choice(
-                    f"{preset.name} ({preset.slug})",
-                    value=preset.slug,
-                )
-                for preset in saved_presets.values()
-            ],
-            style=style,
-            instruction="Use arrows to move, enter to continue",
-        ).ask()
-        if preset_slug is None:
-            raise SystemExit(0)
-        preset = saved_presets[preset_slug]
-        return choose_preset_action(
-            SearchConfig.from_dict(preset.config.to_dict()),
-            preset.name,
-            style,
-        )
-    if startup_choice == "delete":
-        saved_presets = list_saved_presets()
-        if not saved_presets:
-            questionary.print(
-                f"No saved presets found in `{PRESETS_DIR}/`.",
-                style="fg:#e69875",
-            )
-            return resolve_interactive_start()
-        preset_slug = questionary.select(
-            "Delete saved preset",
-            choices=[
-                questionary.Choice(
-                    f"{preset.name} ({preset.slug})",
-                    value=preset.slug,
-                )
-                for preset in saved_presets.values()
-            ],
-            style=style,
-            instruction="Use arrows to move, enter to continue",
-        ).ask()
-        if preset_slug is None:
-            raise SystemExit(0)
-        confirmed = questionary.select(
-            f"Delete preset `{preset_slug}`?",
-            choices=["No", "Yes"],
-            default="No",
-            style=style,
-            instruction="Use arrows to move, enter to continue",
-        ).ask()
-        if confirmed is None:
-            raise SystemExit(0)
-        if confirmed == "Yes":
-            delete_saved_preset(preset_slug)
-            questionary.print(f"Deleted preset → {preset_slug}", style="fg:#a7c080")
-        return resolve_interactive_start()
-    return collect_config(build_fresh_search_config())
-
-
-def choose_preset_action(config: SearchConfig, preset_name: str, style) -> SearchConfig:
-    questionary = _load_questionary()
-    action = questionary.select(
-        f"{preset_name}",
-        choices=[
-            questionary.Choice("Run this preset now", value="run"),
-            questionary.Choice("Edit this preset before running", value="edit"),
-        ],
-        style=style,
-        instruction="Use arrows to move, enter to continue",
-    ).ask()
-    if action is None:
-        raise SystemExit(0)
-    if action == "run":
-        return config
-    return collect_config(config)
-
-
 def load_preset_config(slug: str) -> SearchConfig:
     presets = list_all_presets()
     try:
@@ -308,17 +170,6 @@ def load_preset_config(slug: str) -> SearchConfig:
     return SearchConfig.from_dict(preset.config.to_dict())
 
 
-def build_fresh_search_config() -> SearchConfig:
-    return SearchConfig(
-        keywords=[],
-        departments=list(DEFAULT_DEPARTMENTS),
-        allowed_countries=[],
-        cities=[],
-        radius_km=None,
-        radius_city="",
-    )
-
-
 def print_presets() -> None:
     presets = list_all_presets()
     for preset in presets.values():
@@ -326,14 +177,3 @@ def print_presets() -> None:
         print(f"{preset.slug} [{source}]")
         if preset.description:
             print(f"  {preset.description}")
-
-
-def _load_questionary():
-    try:
-        import questionary
-    except ModuleNotFoundError as exc:
-        raise SystemExit(
-            "Missing dependency: questionary\n"
-            "Install it with `python3 -m pip install -r requirements.txt`."
-        ) from exc
-    return questionary

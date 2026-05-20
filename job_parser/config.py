@@ -4,17 +4,16 @@ import json
 from dataclasses import asdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import parse_qs, quote_plus, unquote_plus, urlparse
 
-DEFAULT_DEPARTMENTS = [
-    "Software Development",
-    "Information Technology",
-    "Engineering",
-]
-ENTRY_SENIORITY_TERMS = {"entry", "junior", "intern", "graduate"}
-ASSOCIATE_SENIORITY_TERMS = {"associate"}
-MID_SENIORITY_TERMS = {"mid"}
 SENIOR_SENIORITY_TERMS = {"senior", "lead", "principal", "staff", "manager"}
+OTHER_SENIORITY_TERMS = {"entry", "junior", "intern", "graduate", "associate", "mid"}
+HIRING_CAFE_SENIOR_SENIORITY_LEVELS = ["Senior Level"]
+HIRING_CAFE_ENTRY_SENIORITY_LEVELS = [
+    "No Prior Experience Required",
+    "Entry Level",
+    "Mid Level",
+]
 
 
 @dataclass(slots=True)
@@ -22,7 +21,6 @@ class SearchConfig:
     keywords: list[str] = field(
         default_factory=lambda: [".NET", "C#", "ASP.NET", "TypeScript", "React"]
     )
-    departments: list[str] = field(default_factory=lambda: list(DEFAULT_DEPARTMENTS))
     workplace_types: list[str] = field(
         default_factory=lambda: ["Remote", "Hybrid", "Onsite"]
     )
@@ -44,41 +42,60 @@ class SearchConfig:
     cities: list[str] = field(default_factory=list)
     radius_km: int | None = None
     radius_city: str = ""
+    session_state_file: str = ""
+    browser_profile_dir: str = ""
+    search_url: str = ""
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
 
     @classmethod
     def from_dict(cls, payload: dict[str, object]) -> "SearchConfig":
+        defaults = cls()
         return cls(
-            keywords=_normalize_str_list(payload.get("keywords"))
-            or cls().keywords,
-            departments=_normalize_str_list(payload.get("departments"))
-            or cls().departments,
-            workplace_types=_normalize_str_list(payload.get("workplace_types"))
-            or cls().workplace_types,
-            allowed_countries=_normalize_str_list(payload.get("allowed_countries"))
-            or cls().allowed_countries,
-            remote_scopes=_normalize_str_list(payload.get("remote_scopes"))
-            or cls().remote_scopes,
-            seniority_terms=_normalize_str_list(payload.get("seniority_terms"))
-            or cls().seniority_terms,
-            include_unspecified_seniority=bool(
-                payload.get("include_unspecified_seniority", cls().include_unspecified_seniority)
+            keywords=_normalize_str_list_or_default(payload, "keywords", defaults.keywords),
+            workplace_types=_normalize_str_list_or_default(
+                payload,
+                "workplace_types",
+                defaults.workplace_types,
             ),
-            commitments=_normalize_str_list(payload.get("commitments"))
-            or cls().commitments,
-            base_url=str(payload.get("base_url") or cls().base_url),
-            markdown_output=str(payload.get("markdown_output") or cls().markdown_output),
-            json_output=str(payload.get("json_output") or cls().json_output),
-            export_markdown=bool(payload.get("export_markdown", cls().export_markdown)),
-            export_json=bool(payload.get("export_json", cls().export_json)),
-            seen_ids_file=str(payload.get("seen_ids_file") or cls().seen_ids_file),
-            include_seen=bool(payload.get("include_seen", cls().include_seen)),
-            max_pages=_normalize_optional_int(payload.get("max_pages"), cls().max_pages, preserve_none=True),
+            allowed_countries=_normalize_str_list_or_default(
+                payload,
+                "allowed_countries",
+                defaults.allowed_countries,
+            ),
+            remote_scopes=_normalize_str_list_or_default(
+                payload,
+                "remote_scopes",
+                defaults.remote_scopes,
+            ),
+            seniority_terms=_normalize_str_list_or_default(
+                payload,
+                "seniority_terms",
+                defaults.seniority_terms,
+            ),
+            include_unspecified_seniority=bool(
+                payload.get("include_unspecified_seniority", defaults.include_unspecified_seniority)
+            ),
+            commitments=_normalize_str_list_or_default(
+                payload,
+                "commitments",
+                defaults.commitments,
+            ),
+            base_url=str(payload.get("base_url") or defaults.base_url),
+            markdown_output=str(payload.get("markdown_output") or defaults.markdown_output),
+            json_output=str(payload.get("json_output") or defaults.json_output),
+            export_markdown=bool(payload.get("export_markdown", defaults.export_markdown)),
+            export_json=bool(payload.get("export_json", defaults.export_json)),
+            seen_ids_file=str(payload.get("seen_ids_file") or defaults.seen_ids_file),
+            include_seen=bool(payload.get("include_seen", defaults.include_seen)),
+            max_pages=_normalize_optional_int(payload.get("max_pages"), defaults.max_pages, preserve_none=True),
             cities=_normalize_str_list(payload.get("cities")),
             radius_km=_normalize_optional_int(payload.get("radius_km"), None, preserve_none=True),
             radius_city=str(payload.get("radius_city") or ""),
+            session_state_file=str(payload.get("session_state_file") or ""),
+            browser_profile_dir=str(payload.get("browser_profile_dir") or ""),
+            search_url=str(payload.get("search_url") or ""),
         )
 
 
@@ -99,34 +116,61 @@ CITY_COORDS: dict[str, tuple[float, float]] = {
 }
 
 def build_search_state(config: SearchConfig) -> str:
-    return quote(
-        json.dumps(
-            {
-                "seniorityLevel": build_server_seniority_levels(config),
-                "commitmentTypes": ["Full Time"],
-                "departments": config.departments or DEFAULT_DEPARTMENTS,
-            }
-        )
-    )
+    if config.search_url.strip():
+        parsed = parse_search_url(config.search_url)
+        if parsed is not None:
+            return parsed
+    payload: dict[str, object] = {}
+    query = " ".join(config.keywords).strip()
+    from job_parser.api import build_locations as api_build_locations
+
+    locations = api_build_locations(config)
+    seniority_levels = build_seniority_level_filter(config)
+    technology_query = build_technology_keywords_query(config)
+    if query:
+        payload["searchQuery"] = query
+    if technology_query:
+        payload["technologyKeywordsQuery"] = technology_query
+    if seniority_levels:
+        payload["seniorityLevel"] = seniority_levels
+    if locations:
+        payload["locations"] = locations
+    return quote_plus(json.dumps(payload, separators=(",", ":")))
 
 
-def build_server_seniority_levels(config: SearchConfig) -> list[str]:
+def parse_search_url(value: str) -> str | None:
+    parsed = urlparse(value.strip())
+    if not parsed.scheme or not parsed.netloc:
+        return None
+    query = parse_qs(parsed.query)
+    search_state = query.get("searchState")
+    if not search_state:
+        return None
+    return quote_plus(search_state[0])
+
+
+def is_senior_scope(config: SearchConfig) -> bool:
     selected_terms = {term.casefold() for term in config.seniority_terms}
-    levels: list[str] = []
+    return bool(selected_terms & SENIOR_SENIORITY_TERMS)
 
-    if selected_terms & ENTRY_SENIORITY_TERMS:
-        levels.append("Entry Level")
-    if selected_terms & MID_SENIORITY_TERMS:
-        levels.append("Mid Level")
-    if selected_terms & ASSOCIATE_SENIORITY_TERMS:
-        if "Entry Level" not in levels:
-            levels.append("Entry Level")
-        if "Mid Level" not in levels:
-            levels.append("Mid Level")
-    if selected_terms & SENIOR_SENIORITY_TERMS:
-        levels.append("Senior Level")
 
-    return levels or ["Entry Level"]
+def build_seniority_level_filter(config: SearchConfig) -> list[str]:
+    selected_terms = {term.casefold() for term in config.seniority_terms}
+    if not selected_terms:
+        return []
+    if is_senior_scope(config):
+        return list(HIRING_CAFE_SENIOR_SENIORITY_LEVELS)
+    if selected_terms & OTHER_SENIORITY_TERMS:
+        return list(HIRING_CAFE_ENTRY_SENIORITY_LEVELS)
+    return []
+
+
+def build_technology_keywords_query(config: SearchConfig) -> str:
+    keywords = [keyword.strip() for keyword in config.keywords if keyword.strip()]
+    if len(keywords) <= 1:
+        return ""
+    quoted = [f'"{keyword}"' for keyword in keywords]
+    return " AND ".join(quoted)
 
 
 def load_seen_ids(path: str | Path) -> set[str]:
@@ -166,6 +210,16 @@ def _normalize_str_list(value: object) -> list[str]:
     if value:
         return [str(value)]
     return []
+
+
+def _normalize_str_list_or_default(
+    payload: dict[str, object],
+    key: str,
+    default: list[str],
+) -> list[str]:
+    if key not in payload:
+        return list(default)
+    return _normalize_str_list(payload.get(key))
 
 
 def _normalize_optional_int(

@@ -26,12 +26,18 @@ def get_builtin_presets() -> dict[str, Preset]:
     return {
         DEFAULT_PRESET_SLUG: Preset(
             slug=DEFAULT_PRESET_SLUG,
-            name="Software Germany Junior",
+            name="Entry Level",
             description=(
-                "Junior and entry-level software roles in Germany or remote Europe "
-                "matching the current default tech stack keywords."
+                "Entry-level search. Keywords are supplied at runtime."
             ),
-            config=SearchConfig(),
+            config=SearchConfig(
+                keywords=["C#"],
+                workplace_types=[],
+                allowed_countries=[],
+                remote_scopes=[],
+                seniority_terms=["entry", "junior", "associate", "intern", "graduate", "mid"],
+                commitments=[],
+            ),
             path=None,
         )
     }

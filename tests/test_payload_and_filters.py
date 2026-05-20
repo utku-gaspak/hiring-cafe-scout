@@ -13,7 +13,6 @@ from job_parser.filters import (
 )
 from job_parser.models import GeoPoint, Job
 from job_parser.payload import parse_job
-from job_parser.wizard import csv_values, render_summary
 
 
 def make_hit(**overrides):
@@ -121,11 +120,13 @@ class FilterTests(unittest.TestCase):
         self.config.keywords = ["missing"]
         self.assertFalse(matches_keyword(self.job, self.config))
 
-    def test_seniority_filter_keeps_blank_and_juniorish_values(self):
+    def test_seniority_filter_keeps_blank_and_non_senior_values(self):
         self.assertTrue(matches_seniority(self.job))
         self.job.seniority_level = ""
         self.assertTrue(matches_seniority(self.job))
         self.job.seniority_level = "Mid Level"
+        self.assertTrue(matches_seniority(self.job))
+        self.job.seniority_level = "Senior Level"
         self.assertFalse(matches_seniority(self.job))
 
     def test_commitment_filter_accepts_full_time_lists(self):
@@ -136,29 +137,32 @@ class FilterTests(unittest.TestCase):
 
     def test_configured_seniority_filter_respects_selection(self):
         self.assertTrue(matches_seniority_configured(self.job, self.config))
-        self.config.seniority_terms = ["intern"]
-        self.assertFalse(matches_seniority_configured(self.job, self.config))
-        self.job.seniority_level = ""
-        self.assertTrue(matches_seniority_configured(self.job, self.config))
-        self.config.include_unspecified_seniority = False
-        self.assertFalse(matches_seniority_configured(self.job, self.config))
-
-    def test_configured_seniority_filter_accepts_mid_and_senior_options(self):
         self.job.seniority_level = "Mid Level"
-        self.config.seniority_terms = ["mid"]
-        self.config.include_unspecified_seniority = False
         self.assertTrue(matches_seniority_configured(self.job, self.config))
+        self.job.seniority_level = "Senior Level"
+        self.assertFalse(matches_seniority_configured(self.job, self.config))
 
+    def test_configured_seniority_filter_accepts_senior_scope(self):
         self.job.seniority_level = "Senior Level"
         self.config.seniority_terms = ["senior"]
         self.assertTrue(matches_seniority_configured(self.job, self.config))
 
         self.job.seniority_level = "Lead Engineer"
-        self.config.seniority_terms = ["lead"]
         self.assertTrue(matches_seniority_configured(self.job, self.config))
 
-        self.job.seniority_level = "Principal Engineer"
-        self.config.seniority_terms = ["manager"]
+        self.job.seniority_level = "Mid Level"
+        self.assertFalse(matches_seniority_configured(self.job, self.config))
+
+    def test_configured_seniority_filter_treats_others_as_non_senior(self):
+        self.config.seniority_terms = ["mid"]
+
+        self.job.seniority_level = "Mid Level"
+        self.assertTrue(matches_seniority_configured(self.job, self.config))
+
+        self.job.seniority_level = "Junior Engineer"
+        self.assertTrue(matches_seniority_configured(self.job, self.config))
+
+        self.job.seniority_level = "Senior Level"
         self.assertFalse(matches_seniority_configured(self.job, self.config))
 
     def test_location_filter_allows_remote_europe_and_city_matches(self):
@@ -186,31 +190,21 @@ class FilterTests(unittest.TestCase):
         self.config.workplace_types = ["Hybrid", "Onsite"]
         self.assertFalse(matches_location(self.job, self.config))
         self.config.workplace_types = ["Remote"]
-        self.config.remote_scopes = ["Worldwide"]
-        self.assertFalse(matches_location(self.job, self.config))
+        self.assertTrue(matches_location(self.job, self.config))
+
+    def test_location_filter_allows_empty_filters(self):
+        self.config.workplace_types = []
+        self.config.allowed_countries = []
+        self.config.cities = []
+        self.config.radius_city = ""
+        self.config.radius_km = None
+        self.job.work_type = "Onsite"
+        self.assertTrue(matches_location(self.job, self.config))
 
     def test_location_filter_accepts_country_names_from_discovery(self):
         self.job.work_type = "Hybrid"
         self.config.allowed_countries = ["Germany"]
         self.assertTrue(matches_location(self.job, self.config))
-
-
-class WizardHelperTests(unittest.TestCase):
-    def test_csv_values_discards_empty_entries(self):
-        self.assertEqual(csv_values("Berlin, Hamburg, ,Munich"), ["Berlin", "Hamburg", "Munich"])
-
-    def test_render_summary_mentions_outputs_and_location_mode(self):
-        config = SearchConfig(
-            keywords=["React"],
-            cities=["Berlin"],
-            export_markdown=True,
-            export_json=False,
-        )
-        summary = render_summary(config)
-
-        self.assertIn("Keywords: React", summary)
-        self.assertIn("Cities: Berlin", summary)
-        self.assertIn("Outputs: Markdown", summary)
 
 
 if __name__ == "__main__":

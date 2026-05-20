@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from collections import Counter
+from contextlib import suppress
 import json
 import re
+import sys
+from urllib.error import HTTPError, URLError
 from html import unescape
 from urllib.request import Request, urlopen
 
@@ -106,7 +109,12 @@ def discover_filter_catalog(base_url: str) -> FilterCatalog:
             locations=locations,
             skills=skills,
         )
-    except Exception:
+    except Exception as exc:
+        print(
+            f"Warning: could not inspect hiring.cafe payload ({exc}); "
+            "falling back to built-in defaults.",
+            file=sys.stderr,
+        )
         return FilterCatalog(
             departments=list(DEFAULT_DEPARTMENTS),
             countries=[],
@@ -115,18 +123,32 @@ def discover_filter_catalog(base_url: str) -> FilterCatalog:
         )
 
 
+def build_payload_inspection_report(payload: dict) -> str:
+    page_props = payload.get("props", {}).get("pageProps", {})
+    lines: list[str] = []
+
+    if isinstance(page_props, dict):
+        lines.append("pageProps keys:")
+        lines.append("  " + ", ".join(sorted(str(key) for key in page_props.keys())))
+        filters = page_props.get("filters")
+        if isinstance(filters, dict):
+            lines.append("filters keys:")
+            lines.append("  " + ", ".join(sorted(str(key) for key in filters.keys())))
+    else:
+        lines.append("pageProps: <missing or non-dict>")
+
+    lines.append("")
+    lines.append("candidate catalog matches:")
+    lines.extend(_format_candidate_matches(payload))
+    return "\n".join(lines)
+
+
 def fetch_next_data_payload(base_url: str) -> dict:
-    request = Request(
-        base_url,
-        headers={
-            "User-Agent": (
-                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            )
-        },
-    )
-    with urlopen(request, timeout=30) as response:
-        html = response.read().decode("utf-8", errors="replace")
+    html = _fetch_html_via_http(base_url)
+    if html is None:
+        html = _fetch_html_via_playwright(base_url)
+    if html is None:
+        raise ValueError("Could not fetch homepage HTML.")
 
     match = NEXT_DATA_PATTERN.search(html)
     if not match:
@@ -134,11 +156,75 @@ def fetch_next_data_payload(base_url: str) -> dict:
     return json.loads(unescape(match.group(1)))
 
 
+def _fetch_html_via_http(base_url: str) -> str | None:
+    request = Request(
+        base_url,
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            ),
+            "Accept": (
+                "text/html,application/xhtml+xml,application/xml;q=0.9,"
+                "image/avif,image/webp,*/*;q=0.8"
+            ),
+            "Accept-Language": "en-US,en;q=0.9",
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none",
+            "Sec-Fetch-User": "?1",
+            "Upgrade-Insecure-Requests": "1",
+        },
+    )
+    try:
+        with urlopen(request, timeout=30) as response:
+            return response.read().decode("utf-8", errors="replace")
+    except (HTTPError, URLError):
+        return None
+
+
+def _fetch_html_via_playwright(base_url: str) -> str | None:
+    with suppress(ModuleNotFoundError):
+        from playwright.sync_api import sync_playwright
+        from playwright.sync_api import TimeoutError as playwright_timeout
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(
+                headless=True,
+                args=["--disable-blink-features=AutomationControlled"],
+            )
+            try:
+                context = browser.new_context(
+                    user_agent=(
+                        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+                    ),
+                    locale="en-US",
+                    viewport={"width": 1280, "height": 900},
+                )
+                page = context.new_page()
+                page.add_init_script(
+                    "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
+                )
+                try:
+                    page.goto(base_url, wait_until="domcontentloaded", timeout=30_000)
+                except playwright_timeout:
+                    page.goto(base_url, wait_until="commit", timeout=30_000)
+                page.wait_for_timeout(2_000)
+                return page.content()
+            finally:
+                browser.close()
+    return None
+
+
 def extract_departments_from_payload(payload: dict) -> list[str]:
     departments = _extract_best_string_candidate(
         payload,
         keyword="department",
         preferred_values=DEFAULT_DEPARTMENTS,
+        extra_keywords=("categories", "category", "dept", "departments", "sectors"),
     )
     if _looks_like_skill_list(departments):
         return []
@@ -171,11 +257,18 @@ def extract_skills_from_payload(payload: dict) -> list[str]:
     candidates = _collect_skill_candidates(payload)
     if not candidates:
         return []
-    best = candidates[0][1]
+    best = candidates[0][2]
     return _dedupe_preserve_order([option.label for option in best])
 
 
 def _normalize_option_list(values: list[object]) -> list[FilterOption]:
+    return _normalize_option_list_with_minimum(values, min_items=1)
+
+
+def _normalize_option_list_with_minimum(
+    values: list[object],
+    min_items: int,
+) -> list[FilterOption]:
     if not values:
         return []
     if all(isinstance(value, str) for value in values):
@@ -184,7 +277,7 @@ def _normalize_option_list(values: list[object]) -> list[FilterOption]:
             for value in values
             if _is_readable_label(str(value).strip())
         ]
-        return normalized if len(normalized) >= 3 else []
+        return normalized if len(normalized) >= min_items else []
     if all(isinstance(value, dict) for value in values):
         extracted: list[FilterOption] = []
         for value in values:
@@ -202,7 +295,7 @@ def _normalize_option_list(values: list[object]) -> list[FilterOption]:
                         raw_value = candidate.strip()
                         break
                 extracted.append(FilterOption(label=text, value=raw_value or text))
-        return extracted if len(extracted) >= 3 else []
+        return extracted if len(extracted) >= min_items else []
     return []
 
 
@@ -375,7 +468,7 @@ def _extract_best_string_candidate(
     candidates = _collect_candidates(payload, keyword, preferred_values, extra_keywords)
     if not candidates:
         return []
-    best = candidates[0][1]
+    best = candidates[0][2]
     return _dedupe_preserve_order([option.label for option in best])
 
 
@@ -388,7 +481,7 @@ def _extract_best_option_candidate(
     candidates = _collect_candidates(payload, keyword, preferred_values, extra_keywords)
     if not candidates:
         return []
-    best = candidates[0][1]
+    best = candidates[0][2]
     deduped: list[FilterOption] = []
     seen: set[str] = set()
     for option in best:
@@ -405,8 +498,8 @@ def _collect_candidates(
     keyword: str,
     preferred_values: list[str],
     extra_keywords: tuple[str, ...] = (),
-) -> list[tuple[int, list[FilterOption]]]:
-    candidates: list[tuple[int, list[FilterOption]]] = []
+) -> list[tuple[int, tuple[str, ...], list[FilterOption]]]:
+    candidates: list[tuple[int, tuple[str, ...], list[FilterOption]]] = []
 
     def visit(node: object, path: tuple[str, ...]) -> None:
         if isinstance(node, dict):
@@ -414,22 +507,22 @@ def _collect_candidates(
                 visit(value, path + (str(key),))
             return
         if isinstance(node, list):
-            option_values = _normalize_option_list(node)
+            option_values = _normalize_option_list_with_minimum(node, min_items=1)
             if option_values:
                 labels = [option.label for option in option_values]
                 score = _score_candidate(path, labels, keyword, preferred_values, extra_keywords)
                 if score > 0:
-                    candidates.append((score, option_values))
+                    candidates.append((score, path, option_values))
             for item in node:
                 visit(item, path)
 
     visit(payload, tuple())
-    candidates.sort(key=lambda item: (item[0], len(item[1])), reverse=True)
+    candidates.sort(key=lambda item: (item[0], len(item[2])), reverse=True)
     return candidates
 
 
-def _collect_skill_candidates(payload: dict) -> list[tuple[int, list[FilterOption]]]:
-    candidates: list[tuple[int, list[FilterOption]]] = []
+def _collect_skill_candidates(payload: dict) -> list[tuple[int, tuple[str, ...], list[FilterOption]]]:
+    candidates: list[tuple[int, tuple[str, ...], list[FilterOption]]] = []
 
     def visit(node: object, path: tuple[str, ...]) -> None:
         if isinstance(node, dict):
@@ -437,18 +530,63 @@ def _collect_skill_candidates(payload: dict) -> list[tuple[int, list[FilterOptio
                 visit(value, path + (str(key),))
             return
         if isinstance(node, list):
-            option_values = _normalize_option_list(node)
+            option_values = _normalize_option_list_with_minimum(node, min_items=1)
             if option_values:
                 labels = [option.label for option in option_values]
                 score = _score_skill_candidate(path, labels)
                 if score > 0:
-                    candidates.append((score, option_values))
+                    candidates.append((score, path, option_values))
             for item in node:
                 visit(item, path)
 
     visit(payload, tuple())
-    candidates.sort(key=lambda item: (item[0], len(item[1])), reverse=True)
+    candidates.sort(key=lambda item: (item[0], len(item[2])), reverse=True)
     return candidates
+
+
+def _format_candidate_matches(payload: dict, limit: int = 5) -> list[str]:
+    sections = [
+        (
+            "departments",
+            _collect_candidates(
+                payload,
+                keyword="department",
+                preferred_values=DEFAULT_DEPARTMENTS,
+                extra_keywords=("categories", "category", "dept", "departments", "sectors"),
+            ),
+        ),
+        (
+            "countries",
+            _collect_candidates(
+                payload,
+                keyword="country",
+                preferred_values=[],
+                extra_keywords=("countries",),
+            ),
+        ),
+        (
+            "locations",
+            _collect_candidates(
+                payload,
+                keyword="location",
+                preferred_values=[],
+                extra_keywords=("region", "regions", "locations"),
+            ),
+        ),
+        ("skills", _collect_skill_candidates(payload)),
+    ]
+
+    lines: list[str] = []
+    for section_name, candidates in sections:
+        lines.append(f"{section_name}:")
+        if not candidates:
+            lines.append("  (none)")
+            continue
+        for score, path, options in candidates[:limit]:
+            labels = ", ".join(option.label for option in options[:10])
+            lines.append(f"  score={score} path={'/'.join(path) or '<root>'}")
+            lines.append(f"    {labels}")
+    return lines
 
 
 def _normalize_country_option(option: FilterOption) -> FilterOption:

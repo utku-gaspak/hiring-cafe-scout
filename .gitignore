@@ -9,6 +9,7 @@ jobs*.md
 jobs.json
 presets/
 architecture.md
+plan.md
 browser-profile/
 browser-profiles/
 browser-session*.json

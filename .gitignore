@@ -8,6 +8,14 @@ seen_ids.txt
 jobs*.md
 jobs.json
 presets/
+architecture.md
+browser-profile/
+browser-profiles/
+browser-session*.json
+runs/
+data/
+*.sqlite
+*.sqlite3
 *.egg-info/
 uv.lock
 list/

@@ -80,7 +80,8 @@ async def _scrape_with_browser(
     search_state = _build_search_state(config)
     search_url = _build_search_url(config, search_state)
 
-    async with Chrome(options=options) as browser:
+    browser = Chrome(options=options)
+    try:
         try:
             tab = await browser.start()
         except Exception as exc:
@@ -91,8 +92,24 @@ async def _scrape_with_browser(
                 "or install Playwright Chromium with `uv run playwright install chromium`.\n"
                 f"Underlying error: {exc}"
             ) from exc
-        await tab.go_to(config.base_url)
+        initial_url = search_url if config.search_url.strip() else config.base_url
+        _debug(f"initial navigation to {initial_url}")
+        await tab.go_to(initial_url)
         if await _looks_like_challenge(tab):
+            _write_progress(
+                config,
+                _build_progress_payload(
+                    status="needs_verification",
+                    pages_scraped=0,
+                    visible_jobs_scraped=0,
+                    matched_jobs=0,
+                    estimated_total_jobs=None,
+                    current_page_listings=0,
+                    current_page_matched=0,
+                    skipped_seen=0,
+                    message="Cloudflare challenge detected",
+                ),
+            )
             print("Cloudflare challenge detected. Solve it in the browser window.")
             await asyncio.to_thread(input, "Press Enter once the browser is usable: ")
             await asyncio.sleep(1)
@@ -110,6 +127,20 @@ async def _scrape_with_browser(
                 print(f"({total_display} total jobs visible on this page)")
 
             if not page_data["cards"]:
+                _write_progress(
+                    config,
+                    _build_progress_payload(
+                        status="done",
+                        pages_scraped=page_num + 1,
+                        visible_jobs_scraped=extracted_count,
+                        matched_jobs=len(all_jobs),
+                        estimated_total_jobs=page_data["total_count"],
+                        current_page_listings=0,
+                        current_page_matched=0,
+                        skipped_seen=0,
+                        message="No more visible listings",
+                    ),
+                )
                 print("0 listings → 0 matched")
                 break
 
@@ -136,17 +167,56 @@ async def _scrape_with_browser(
             print(f"{len(page_data['cards']):>3} listings → {matched} matched{skip_suffix}")
 
             extracted_count += page_data["job_count"]
+            _write_progress(
+                config,
+                _build_progress_payload(
+                    status="running",
+                    pages_scraped=page_num + 1,
+                    visible_jobs_scraped=extracted_count,
+                    matched_jobs=len(all_jobs),
+                    estimated_total_jobs=page_data["total_count"],
+                    current_page_listings=page_data["job_count"],
+                    current_page_matched=matched,
+                    skipped_seen=skipped,
+                    message=f"Scraped page {page_num + 1}",
+                ),
+            )
             if page_data["total_count"] is not None and extracted_count < page_data["total_count"]:
                 page_num += 1
                 continue
 
             if not await _has_next_page(tab, page_num + 1):
+                _write_progress(
+                    config,
+                    _build_progress_payload(
+                        status="done",
+                        pages_scraped=page_num + 1,
+                        visible_jobs_scraped=extracted_count,
+                        matched_jobs=len(all_jobs),
+                        estimated_total_jobs=page_data["total_count"],
+                        current_page_listings=page_data["job_count"],
+                        current_page_matched=matched,
+                        skipped_seen=skipped,
+                        message="Last page reached",
+                    ),
+                )
                 print("  last page reached.")
                 break
 
             page_num += 1
 
+    finally:
+        await _close_browser_safely(browser)
+
     return all_jobs
+
+
+async def _close_browser_safely(browser: Any) -> None:
+    with contextlib.suppress(Exception):
+        await browser.stop()
+        return
+    with contextlib.suppress(Exception):
+        await browser.close()
 
 
 def _build_browser_options(*, ChromiumOptions: Any, PageLoadState: Any, profile_dir: str | None) -> Any:
@@ -192,10 +262,6 @@ def _build_browser_options(*, ChromiumOptions: Any, PageLoadState: Any, profile_
         profile_path.mkdir(parents=True, exist_ok=True)
         with contextlib.suppress(Exception):
             options.add_argument(f"--user-data-dir={profile_path}")
-        with contextlib.suppress(Exception):
-            options.add_argument("--no-first-run")
-        with contextlib.suppress(Exception):
-            options.add_argument("--no-default-browser-check")
 
     return options
 
@@ -374,6 +440,50 @@ def _extract_total_job_count(body_text: str) -> int | None:
         return None
 
 
+def _build_progress_payload(
+    *,
+    status: str,
+    pages_scraped: int,
+    visible_jobs_scraped: int,
+    matched_jobs: int,
+    estimated_total_jobs: int | None,
+    current_page_listings: int,
+    current_page_matched: int,
+    skipped_seen: int,
+    message: str,
+) -> dict[str, object]:
+    progress_percent: int | None = None
+    if status == "done":
+        progress_percent = 100
+    elif estimated_total_jobs and estimated_total_jobs > 0:
+        progress_percent = min(round((visible_jobs_scraped / estimated_total_jobs) * 100), 99)
+
+    return {
+        "status": status,
+        "pages_scraped": pages_scraped,
+        "visible_jobs_scraped": visible_jobs_scraped,
+        "matched_jobs": matched_jobs,
+        "estimated_total_jobs": estimated_total_jobs,
+        "total_is_estimate": estimated_total_jobs is not None,
+        "progress_percent": progress_percent,
+        "current_page_listings": current_page_listings,
+        "current_page_matched": current_page_matched,
+        "skipped_seen": skipped_seen,
+        "message": message,
+    }
+
+
+def _write_progress(config: SearchConfig, payload: dict[str, object]) -> None:
+    if not config.progress_output.strip():
+        return
+    progress_path = Path(config.progress_output).expanduser()
+    progress_path.parent.mkdir(parents=True, exist_ok=True)
+    progress_path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+
 async def _extract_card_blocks(tab: Any) -> list[dict[str, str]]:
     script = """
     const blocks = [];
@@ -432,6 +542,8 @@ def _build_search_state(config: SearchConfig) -> str:
 
 
 def _build_search_url(config: SearchConfig, search_state: str) -> str:
+    if config.search_url.strip():
+        return config.search_url.strip()
     base = config.base_url.rstrip("/")
     if not search_state:
         return base

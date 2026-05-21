@@ -76,7 +76,7 @@ async def run(config: SearchConfig | None = None) -> None:
 async def scrape(config: SearchConfig, seen_ids: set[str]) -> list[Job]:
     url_mode = bool(config.search_url.strip())
     browser_profile_dir = config.browser_profile_dir.strip() or None
-    if browser_profile_dir:
+    if url_mode or browser_profile_dir:
         return await asyncio.to_thread(
             scrape_with_browser,
             config,

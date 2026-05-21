@@ -60,6 +60,21 @@ class ExporterTests(unittest.TestCase):
             self.assertEqual(json_payload["results"][0]["id"], "job-1")
             self.assertEqual(json_payload["results"][0]["geolocations"][0]["lat"], 52.52)
 
+    def test_exports_create_parent_directories(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            config = SearchConfig(
+                keywords=["React"],
+                markdown_output=str(temp_path / "nested" / "manual" / "jobs.md"),
+                json_output=str(temp_path / "nested" / "manual" / "jobs.json"),
+            )
+
+            save_markdown([make_job()], config)
+            save_json([make_job()], config)
+
+            self.assertTrue((temp_path / "nested" / "manual" / "jobs.md").exists())
+            self.assertTrue((temp_path / "nested" / "manual" / "jobs.json").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

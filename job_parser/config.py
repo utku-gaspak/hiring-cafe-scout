@@ -45,6 +45,7 @@ class SearchConfig:
     session_state_file: str = ""
     browser_profile_dir: str = ""
     search_url: str = ""
+    progress_output: str = ""
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -96,6 +97,7 @@ class SearchConfig:
             session_state_file=str(payload.get("session_state_file") or ""),
             browser_profile_dir=str(payload.get("browser_profile_dir") or ""),
             search_url=str(payload.get("search_url") or ""),
+            progress_output=str(payload.get("progress_output") or ""),
         )
 
 

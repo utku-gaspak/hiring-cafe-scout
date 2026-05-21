@@ -33,5 +33,6 @@ def save_markdown(jobs: list[Job], config: SearchConfig) -> None:
             f"{work_details} | {job.posted_str} | {job.url}{apply_suffix}"
         )
 
-    Path(config.markdown_output).write_text("\n".join(lines), encoding="utf-8")
-
+    output_path = Path(config.markdown_output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text("\n".join(lines), encoding="utf-8")

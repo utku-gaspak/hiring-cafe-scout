@@ -13,10 +13,7 @@ override the keyword at runtime.
 - Supports radius-based filtering around German cities
 - Deduplicates across runs:  only new postings appear each time
 - Exports to `jobs.md` and `jobs.json` with direct company apply links
-
-## Demo
-
-![CLI demo](assets/demo1.gif)
+- Can emit `progress.json` for web-app/backend progress displays
 
 ## Setup
 
@@ -69,21 +66,58 @@ uv run cafe-scout \
 To run a pasted HiringCafe search URL as-is:
 
 ```bash
-uv run cafe-scout --url "https://hiring.cafe/?searchState=..."
+uv run cafe-scout \
+  --url "https://hiring.cafe/?searchState=..." \
+  --json-output runs/manual/jobs.json \
+  --markdown-output runs/manual/jobs.md \
+  --browser-profile-dir browser-profile
 ```
 
 When `--url` is set, the pasted HiringCafe link becomes the source of truth and
 the scraper parses every job from that search state.
 
-If HiringCafe keeps reloading the Cloudflare challenge, use `--browser-profile-dir` so the scraper keeps a real Chromium profile open while it fetches jobs. The browser requests happen inside that same session, so the API calls inherit the browser state directly.
+For web-app/backend integrations, also write machine-readable progress:
 
-The storage-state export is still available if you want to inspect or reuse cookies manually:
+```bash
+uv run cafe-scout \
+  --url "$HIRING_CAFE_URL" \
+  --json-output "$RUN_DIR/jobs.json" \
+  --markdown-output "$RUN_DIR/jobs.md" \
+  --progress-output "$RUN_DIR/progress.json" \
+  --browser-profile-dir "$PROFILE_DIR"
+```
+
+`progress.json` is updated during browser scraping:
+
+```json
+{
+  "status": "running",
+  "pages_scraped": 2,
+  "visible_jobs_scraped": 60,
+  "matched_jobs": 12,
+  "estimated_total_jobs": 230,
+  "total_is_estimate": true,
+  "progress_percent": 26,
+  "current_page_listings": 30,
+  "current_page_matched": 6,
+  "skipped_seen": 4,
+  "message": "Scraped page 2"
+}
+```
+
+HiringCafe's visible total can be stale or inflated, so treat
+`estimated_total_jobs` and `progress_percent` as UI feedback only. Final counts
+should come from `jobs.json`.
+
+If HiringCafe shows a Cloudflare challenge, use `--browser-profile-dir` so the scraper keeps a real Chromium profile. Clear the challenge manually in the browser window, then press Enter in the CLI. Do not paste cookies; the profile directory is the session.
+
+The storage-state export is still available for local inspection:
 
 ```bash
 uv run cafe-scout --export-session-state browser-session.json
 ```
 
-That opens a real browser, lets you clear the challenge manually, and saves the browser session for later runs.
+That opens a real browser, lets you clear the challenge manually, and saves the browser session state.
 
 To use the persistent browser profile flow instead:
 
@@ -116,11 +150,15 @@ Each result in `jobs.md`:
 
 `jobs.json` exports the same data in a normalized schema for further processing.
 
+Output parent directories are created automatically, so paths like
+`runs/manual/jobs.json` work even when `runs/manual` does not exist yet.
+
 ## Engineering decisions
 
-- Uses HiringCafe's JSON search API when building searches from flags or presets
-- Supports a URL pass-through mode that parses the pasted HiringCafe search state directly
+- Uses browser-context scraping when Cloudflare blocks direct requests
+- Supports a URL pass-through mode that opens the pasted HiringCafe search URL directly
 - Keeps server-side search broad, then applies local keyword, location, commitment, and seniority filtering unless `--url` is set
-- Can reuse a browser-cleared session via a storage-state JSON file when Cloudflare blocks cold requests
+- Can reuse a browser-cleared session via a persistent Chromium profile directory
+- Writes optional progress JSON for backend/frontend polling
 - Deduplication via `seen_ids.txt` so daily runs only surface new postings
 - Preset system makes repeated searches reproducible without editing source code

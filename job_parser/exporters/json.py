@@ -21,7 +21,9 @@ def save_json(jobs: list[Job], config: SearchConfig) -> None:
         },
         "results": [job.to_dict() for job in sorted_jobs],
     }
-    Path(config.json_output).write_text(
+    output_path = Path(config.json_output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
         json.dumps(payload, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )

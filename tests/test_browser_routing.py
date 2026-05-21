@@ -7,6 +7,7 @@ from unittest import mock
 
 from job_parser.app import scrape
 from job_parser.browser_scraper import (
+    _build_progress_payload,
     _build_search_state,
     _build_search_url,
     _href_targets_page,
@@ -41,44 +42,35 @@ class BrowserRoutingTests(unittest.IsolatedAsyncioTestCase):
         fetch_total_count.assert_not_called()
         fetch_jobs_page.assert_not_called()
 
-    async def test_url_mode_bypasses_local_filters(self) -> None:
+    async def test_url_mode_routes_directly_to_browser_without_local_filters(self) -> None:
         config = SearchConfig(
             keywords=["python"],
             allowed_countries=["DE"],
             seniority_terms=["senior"],
             search_url="https://hiring.cafe/?searchState=%7B%22searchQuery%22%3A%22java%22%7D",
         )
-        raw_hit = {
-            "objectID": "job-1",
-            "source": "hiring.cafe",
-            "job_information": {"title": "Ruby Engineer"},
-            "enriched_company_data": {"name": "Acme"},
-            "v5_processed_job_data": {
-                "core_job_title": "Ruby Engineer",
-                "company_name": "Acme",
-                "formatted_workplace_location": "Berlin, Germany",
-                "commitment": ["Full Time"],
-                "workplace_type": "Remote",
-                "seniority_level": "Senior Level",
-                "workplace_cities": ["Berlin"],
-                "workplace_countries": ["DE"],
-                "requirements_summary": "Ruby",
-            },
-        }
+        browser_scraper = mock.Mock(return_value=[])
 
         with (
             mock.patch("job_parser.app.build_search_state") as build_search_state,
             mock.patch("job_parser.app.build_session") as build_session,
-            mock.patch("job_parser.app.fetch_total_count", return_value=1),
-            mock.patch("job_parser.app.fetch_jobs_page", return_value=[raw_hit]),
+            mock.patch("job_parser.app.fetch_total_count") as fetch_total_count,
+            mock.patch("job_parser.app.fetch_jobs_page") as fetch_jobs_page,
+            mock.patch("job_parser.app.scrape_with_browser", new=browser_scraper),
         ):
-            build_session.return_value = mock.Mock()
             result = await scrape(config, seen_ids=set())
 
-        self.assertEqual(len(result), 1)
-        self.assertEqual(result[0].title, "Ruby Engineer")
-        build_search_state.assert_called_once()
-        build_session.assert_called_once()
+        self.assertEqual(result, [])
+        browser_scraper.assert_called_once_with(
+            config,
+            set(),
+            profile_dir=None,
+            apply_local_filters=False,
+        )
+        build_search_state.assert_not_called()
+        build_session.assert_not_called()
+        fetch_total_count.assert_not_called()
+        fetch_jobs_page.assert_not_called()
 
     def test_browser_search_url_includes_search_state_for_keyword_only_search(self) -> None:
         config = SearchConfig(keywords=["C#"], allowed_countries=[], seniority_terms=[])
@@ -92,13 +84,15 @@ class BrowserRoutingTests(unittest.IsolatedAsyncioTestCase):
         )
 
     def test_browser_search_url_prefers_configured_search_url(self) -> None:
+        search_url = "https://hiring.cafe/?searchState=%7B%22searchQuery%22%3A%22java%22%7D"
         config = SearchConfig(
             keywords=["C#"],
             allowed_countries=[],
             seniority_terms=[],
-            search_url="https://hiring.cafe/?searchState=%7B%22searchQuery%22%3A%22java%22%7D",
+            search_url=search_url,
         )
 
+        self.assertEqual(_build_search_url(config, "ignored"), search_url)
         self.assertEqual(
             _build_search_state(config),
             "%7B%22searchQuery%22%3A%22java%22%7D",
@@ -157,6 +151,40 @@ class BrowserRoutingTests(unittest.IsolatedAsyncioTestCase):
         body_text = "C# jobs 230 jobs Job Posting 1 2 3"
 
         self.assertEqual(_extract_total_job_count(body_text), 230)
+
+    def test_progress_payload_marks_total_as_estimate(self) -> None:
+        payload = _build_progress_payload(
+            status="running",
+            pages_scraped=2,
+            visible_jobs_scraped=60,
+            matched_jobs=12,
+            estimated_total_jobs=230,
+            current_page_listings=30,
+            current_page_matched=6,
+            skipped_seen=4,
+            message="Scraped page 2",
+        )
+
+        self.assertEqual(payload["progress_percent"], 26)
+        self.assertEqual(payload["pages_scraped"], 2)
+        self.assertEqual(payload["matched_jobs"], 12)
+        self.assertTrue(payload["total_is_estimate"])
+
+    def test_done_progress_payload_reports_complete_even_when_total_was_inflated(self) -> None:
+        payload = _build_progress_payload(
+            status="done",
+            pages_scraped=5,
+            visible_jobs_scraped=180,
+            matched_jobs=180,
+            estimated_total_jobs=300,
+            current_page_listings=0,
+            current_page_matched=0,
+            skipped_seen=0,
+            message="No more visible listings",
+        )
+
+        self.assertEqual(payload["progress_percent"], 100)
+        self.assertEqual(payload["status"], "done")
 
     def test_parse_card_block_handles_container_text(self) -> None:
         card = _parse_card_block(

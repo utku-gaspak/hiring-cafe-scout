@@ -86,6 +86,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--markdown-output", help="Markdown output file path.")
     parser.add_argument("--json-output", help="JSON output file path.")
     parser.add_argument(
+        "--progress-output",
+        help="Write machine-readable scrape progress to this JSON file.",
+    )
+    parser.add_argument(
         "--session-state",
         help="Path to a browser storage-state JSON file or cookie file for Cloudflare session reuse.",
     )
@@ -142,6 +146,8 @@ def apply_args_to_config(base: SearchConfig, args: argparse.Namespace) -> Search
         config.markdown_output = args.markdown_output
     if args.json_output:
         config.json_output = args.json_output
+    if args.progress_output:
+        config.progress_output = args.progress_output
     if args.session_state is not None:
         config.session_state_file = args.session_state
     if args.browser_profile_dir is not None:

@@ -89,8 +89,8 @@ def _load_sync_playwright() -> ContextManager[_PlaywrightLike]:
     except ModuleNotFoundError as exc:  # pragma: no cover - import guard
         raise SystemExit(
             "Missing dependency: playwright\n"
-            "Install it with `python3 -m pip install -r requirements.txt` "
-            "and then run `python3 -m playwright install chromium`."
+            "Install it with `uv sync --extra session-export` "
+            "and then run `uv run playwright install chromium`."
         ) from exc
     return sync_playwright()
 

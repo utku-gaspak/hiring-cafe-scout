@@ -7,9 +7,11 @@ requires-python = ">=3.12"
 dependencies = [
   "curl-cffi>=0.7",
   "pydoll-python>=2.22.1",
-  "playwright>=1.47",
   "playwright-stealth>=2.0.3",
 ]
+
+[project.optional-dependencies]
+session-export = ["playwright>=1.47"]
 
 [project.scripts]
 cafe-scout = "job_parser.cli:main"

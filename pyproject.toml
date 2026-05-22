@@ -24,6 +24,9 @@ include-package-data = false
 [tool.setuptools.packages.find]
 include = ["job_parser*"]
 
+[tool.uv]
+required-environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
+
 [dependency-groups]
 dev = [
     "pytest>=9.0.3",

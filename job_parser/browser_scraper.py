@@ -61,6 +61,10 @@ def _debug(message: str) -> None:
         print(f"    debug: {message}")
 
 
+def _env_enabled(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 async def _scrape_with_browser(
     *,
     Chrome: Any,
@@ -221,7 +225,8 @@ async def _close_browser_safely(browser: Any) -> None:
 
 def _build_browser_options(*, ChromiumOptions: Any, PageLoadState: Any, profile_dir: str | None) -> Any:
     options = ChromiumOptions()
-    options.headless = False
+    headless = _env_enabled("CAFE_SCOUT_HEADLESS")
+    options.headless = headless
     binary_location = _find_browser_binary()
     if not binary_location:
         raise SystemExit(
@@ -253,6 +258,10 @@ def _build_browser_options(*, ChromiumOptions: Any, PageLoadState: Any, profile_
     ):
         with contextlib.suppress(Exception):
             options.add_argument(argument)
+
+    if headless:
+        with contextlib.suppress(Exception):
+            options.add_argument("--headless=new")
 
     with contextlib.suppress(Exception):
         options.set_accept_languages("en-US,en;q=0.9")

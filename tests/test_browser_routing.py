@@ -7,6 +7,7 @@ from unittest import mock
 
 from job_parser.app import scrape
 from job_parser.browser_scraper import (
+    _build_browser_options,
     _build_progress_payload,
     _build_search_state,
     _build_search_url,
@@ -19,6 +20,22 @@ from job_parser.browser_scraper import (
 from job_parser.config import SearchConfig
 from job_parser.config import HIRING_CAFE_SENIOR_SENIORITY_LEVELS
 from job_parser.browser_scraper import _find_browser_binary
+
+
+class _FakeChromiumOptions:
+    def __init__(self) -> None:
+        self.headless = False
+        self.arguments: list[str] = []
+
+    def add_argument(self, argument: str) -> None:
+        self.arguments.append(argument)
+
+    def set_accept_languages(self, value: str) -> None:
+        self.accept_languages = value
+
+
+class _FakePageLoadState:
+    INTERACTIVE = "interactive"
 
 
 class BrowserRoutingTests(unittest.IsolatedAsyncioTestCase):
@@ -243,6 +260,49 @@ class BrowserRoutingTests(unittest.IsolatedAsyncioTestCase):
 
             with mock.patch.dict(os.environ, {"CAFE_SCOUT_BROWSER_BINARY": binary}, clear=False):
                 self.assertEqual(_find_browser_binary(), binary)
+
+    def test_browser_options_are_visible_by_default(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            binary = os.path.join(temp_dir, "chrome")
+            with open(binary, "w", encoding="utf-8") as file_obj:
+                file_obj.write("#!/bin/sh\n")
+            os.chmod(binary, 0o755)
+
+            with mock.patch.dict(os.environ, {"CAFE_SCOUT_BROWSER_BINARY": binary}, clear=False):
+                options = _build_browser_options(
+                    ChromiumOptions=_FakeChromiumOptions,
+                    PageLoadState=_FakePageLoadState,
+                    profile_dir=None,
+                )
+
+            self.assertFalse(options.headless)
+            self.assertNotIn("--headless=new", options.arguments)
+            self.assertIn("--no-sandbox", options.arguments)
+            self.assertIn("--disable-dev-shm-usage", options.arguments)
+
+    def test_browser_options_can_run_headless_for_docker(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            binary = os.path.join(temp_dir, "chrome")
+            with open(binary, "w", encoding="utf-8") as file_obj:
+                file_obj.write("#!/bin/sh\n")
+            os.chmod(binary, 0o755)
+
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "CAFE_SCOUT_BROWSER_BINARY": binary,
+                    "CAFE_SCOUT_HEADLESS": "1",
+                },
+                clear=False,
+            ):
+                options = _build_browser_options(
+                    ChromiumOptions=_FakeChromiumOptions,
+                    PageLoadState=_FakePageLoadState,
+                    profile_dir=None,
+                )
+
+            self.assertTrue(options.headless)
+            self.assertIn("--headless=new", options.arguments)
 
 
 if __name__ == "__main__":

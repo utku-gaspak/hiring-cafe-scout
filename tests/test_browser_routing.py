@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import unittest
@@ -7,14 +8,17 @@ from unittest import mock
 
 from job_parser.app import scrape
 from job_parser.browser_scraper import (
+    CloudflareVerificationRequired,
     _build_browser_options,
     _build_progress_payload,
     _build_search_state,
     _build_search_url,
+    _browser_fetch_search_page,
     _href_targets_page,
     _extract_total_job_count,
     _parse_card_block,
     _parse_job_cards,
+    _scrape_with_browser,
     _unwrap_script_result,
 )
 from job_parser.config import SearchConfig
@@ -36,6 +40,27 @@ class _FakeChromiumOptions:
 
 class _FakePageLoadState:
     INTERACTIVE = "interactive"
+
+
+class _ChallengeTab:
+    async def go_to(self, url: str) -> None:
+        self.url = url
+
+    async def execute_script(self, script: str):
+        if "document.title" in script:
+            return '"Just a moment..."'
+        return '"Enable JavaScript and cookies"'
+
+
+class _ChallengeBrowser:
+    def __init__(self, options: object) -> None:
+        self.options = options
+
+    async def start(self) -> _ChallengeTab:
+        return _ChallengeTab()
+
+    async def stop(self) -> None:
+        return None
 
 
 class BrowserRoutingTests(unittest.IsolatedAsyncioTestCase):
@@ -88,6 +113,55 @@ class BrowserRoutingTests(unittest.IsolatedAsyncioTestCase):
         build_session.assert_not_called()
         fetch_total_count.assert_not_called()
         fetch_jobs_page.assert_not_called()
+
+    async def test_headless_challenge_writes_progress_and_exits_without_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            binary = os.path.join(temp_dir, "chrome")
+            progress_path = os.path.join(temp_dir, "progress.json")
+            with open(binary, "w", encoding="utf-8") as file_obj:
+                file_obj.write("#!/bin/sh\n")
+            os.chmod(binary, 0o755)
+            config = SearchConfig(
+                search_url="https://hiring.cafe/?searchState=%7B%22searchQuery%22%3A%22java%22%7D",
+                progress_output=progress_path,
+            )
+
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {
+                        "CAFE_SCOUT_BROWSER_BINARY": binary,
+                        "CAFE_SCOUT_HEADLESS": "1",
+                    },
+                    clear=False,
+                ),
+                mock.patch("builtins.input") as input_mock,
+            ):
+                with self.assertRaises(SystemExit) as error:
+                    await _scrape_with_browser(
+                        Chrome=_ChallengeBrowser,
+                        ChromiumOptions=_FakeChromiumOptions,
+                        PageLoadState=_FakePageLoadState,
+                        config=config,
+                        seen_ids=set(),
+                        profile_dir=None,
+                        apply_local_filters=False,
+                    )
+
+            self.assertIn("Verification required", str(error.exception))
+            input_mock.assert_not_called()
+            with open(progress_path, encoding="utf-8") as file_obj:
+                progress = json.load(file_obj)
+            self.assertEqual(progress["status"], "needs_verification")
+            self.assertEqual(progress["message"], "Cloudflare challenge detected")
+
+    async def test_search_page_challenge_raises_verification_required(self) -> None:
+        with self.assertRaises(CloudflareVerificationRequired):
+            await _browser_fetch_search_page(
+                _ChallengeTab(),
+                "https://hiring.cafe/?searchState=%7B%22searchQuery%22%3A%22java%22%7D",
+                0,
+            )
 
     def test_browser_search_url_includes_search_state_for_keyword_only_search(self) -> None:
         config = SearchConfig(keywords=["C#"], allowed_countries=[], seniority_terms=[])

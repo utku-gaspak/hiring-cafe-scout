@@ -18,6 +18,10 @@ from job_parser.filters import (
 from job_parser.models import Job
 
 
+class CloudflareVerificationRequired(Exception):
+    """Raised when the browser reaches a Cloudflare challenge page."""
+
+
 def scrape_with_browser(
     config: SearchConfig,
     seen_ids: set[str],
@@ -76,6 +80,7 @@ async def _scrape_with_browser(
     apply_local_filters: bool,
 ) -> list[Job]:
     all_jobs: list[Job] = []
+    headless = _env_enabled("CAFE_SCOUT_HEADLESS")
     options = _build_browser_options(
         ChromiumOptions=ChromiumOptions,
         PageLoadState=PageLoadState,
@@ -100,20 +105,19 @@ async def _scrape_with_browser(
         _debug(f"initial navigation to {initial_url}")
         await tab.go_to(initial_url)
         if await _looks_like_challenge(tab):
-            _write_progress(
-                config,
-                _build_progress_payload(
-                    status="needs_verification",
-                    pages_scraped=0,
-                    visible_jobs_scraped=0,
-                    matched_jobs=0,
-                    estimated_total_jobs=None,
-                    current_page_listings=0,
-                    current_page_matched=0,
-                    skipped_seen=0,
-                    message="Cloudflare challenge detected",
-                ),
+            _write_needs_verification_progress(
+                config=config,
+                pages_scraped=0,
+                visible_jobs_scraped=0,
+                matched_jobs=0,
+                current_page_listings=0,
+                current_page_matched=0,
+                skipped_seen=0,
             )
+            if headless:
+                raise SystemExit(
+                    "Cloudflare challenge detected. Verification required in a visible browser session."
+                )
             print("Cloudflare challenge detected. Solve it in the browser window.")
             await asyncio.to_thread(input, "Press Enter once the browser is usable: ")
             await asyncio.sleep(1)
@@ -125,7 +129,21 @@ async def _scrape_with_browser(
         while config.max_pages is None or page_num < config.max_pages:
             print(f"  page {page_num + 1:>4} …", end=" ", flush=True)
 
-            page_data = await _browser_fetch_search_page(tab, search_url, page_num)
+            try:
+                page_data = await _browser_fetch_search_page(tab, search_url, page_num)
+            except CloudflareVerificationRequired as exc:
+                _write_needs_verification_progress(
+                    config=config,
+                    pages_scraped=page_num,
+                    visible_jobs_scraped=extracted_count,
+                    matched_jobs=len(all_jobs),
+                    current_page_listings=0,
+                    current_page_matched=0,
+                    skipped_seen=0,
+                )
+                raise SystemExit(
+                    "Cloudflare challenge detected. Verification required in a visible browser session."
+                ) from exc
             if page_num == 0:
                 total_display = page_data["total_count"] if page_data["total_count"] is not None else "?"
                 print(f"({total_display} total jobs visible on this page)")
@@ -336,10 +354,7 @@ async def _browser_fetch_search_page(tab: Any, search_url: str, page_num: int) -
     _debug(f"navigating to {page_url}")
     await tab.go_to(page_url)
     if await _looks_like_challenge(tab):
-        raise SystemExit(
-            "Cloudflare challenge still present after browser context navigation. "
-            "Solve the challenge and rerun."
-        )
+        raise CloudflareVerificationRequired()
 
     body_text = await _wait_for_search_body(tab)
     current_url = await _read_current_url(tab)
@@ -480,6 +495,32 @@ def _build_progress_payload(
         "skipped_seen": skipped_seen,
         "message": message,
     }
+
+
+def _write_needs_verification_progress(
+    *,
+    config: SearchConfig,
+    pages_scraped: int,
+    visible_jobs_scraped: int,
+    matched_jobs: int,
+    current_page_listings: int,
+    current_page_matched: int,
+    skipped_seen: int,
+) -> None:
+    _write_progress(
+        config,
+        _build_progress_payload(
+            status="needs_verification",
+            pages_scraped=pages_scraped,
+            visible_jobs_scraped=visible_jobs_scraped,
+            matched_jobs=matched_jobs,
+            estimated_total_jobs=None,
+            current_page_listings=current_page_listings,
+            current_page_matched=current_page_matched,
+            skipped_seen=skipped_seen,
+            message="Cloudflare challenge detected",
+        ),
+    )
 
 
 def _write_progress(config: SearchConfig, payload: dict[str, object]) -> None:

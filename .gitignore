@@ -10,6 +10,10 @@ jobs.json
 presets/
 architecture.md
 plan.md
+WEBAPP_AGENT.md
+backend.md
+frontend.md
+scraper.md
 browser-profile/
 browser-profiles/
 browser-session*.json

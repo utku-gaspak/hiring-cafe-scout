@@ -5,6 +5,7 @@ import contextlib
 import json
 import os
 import re
+import subprocess
 import time
 from pathlib import Path
 from typing import Any
@@ -90,6 +91,12 @@ async def _scrape_with_browser(
     search_url = _build_search_url(config, search_state)
 
     browser = Chrome(options=options)
+    # Pydoll defaults to stdout=PIPE/stderr=PIPE; in Docker, Chrome's output
+    # fills the 64 KB pipe buffer and blocks, preventing the debug HTTP server
+    # from ever responding. Redirect to DEVNULL to avoid this deadlock.
+    browser._browser_process_manager._process_creator = lambda cmd: subprocess.Popen(
+        cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    )
     try:
         try:
             tab = await browser.start()

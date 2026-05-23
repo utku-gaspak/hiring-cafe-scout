@@ -3,10 +3,9 @@ import os
 import sys
 
 # Replicate exactly what _build_browser_options does
-os.environ.setdefault("CAFE_SCOUT_HEADLESS", "1")
-os.environ.setdefault(
-    "CAFE_SCOUT_BROWSER_BINARY",
-    "/root/.cache/ms-playwright/chromium-1223/chrome-linux64/chrome",
+os.environ["CAFE_SCOUT_HEADLESS"] = "1"
+os.environ["CAFE_SCOUT_BROWSER_BINARY"] = (
+    "/root/.cache/ms-playwright/chromium-1223/chrome-linux64/chrome"
 )
 
 sys.path.insert(0, "/root/code/hiring-cafe-scout/src")

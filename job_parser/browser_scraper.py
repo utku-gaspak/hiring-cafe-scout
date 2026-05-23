@@ -251,7 +251,6 @@ async def _close_browser_safely(browser: Any) -> None:
 def _build_browser_options(*, ChromiumOptions: Any, PageLoadState: Any, profile_dir: str | None) -> Any:
     options = ChromiumOptions()
     headless = _env_enabled("CAFE_SCOUT_HEADLESS")
-    options.headless = headless
     binary_location = _find_browser_binary()
     if not binary_location:
         raise SystemExit(

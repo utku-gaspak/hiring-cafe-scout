@@ -350,8 +350,10 @@ class BrowserRoutingTests(unittest.IsolatedAsyncioTestCase):
                 )
 
             self.assertFalse(options.headless)
+            self.assertEqual(options.start_timeout, 60)
             self.assertNotIn("--headless=new", options.arguments)
             self.assertIn("--no-sandbox", options.arguments)
+            self.assertIn("--disable-setuid-sandbox", options.arguments)
             self.assertIn("--disable-dev-shm-usage", options.arguments)
 
     def test_browser_options_can_run_headless_for_docker(self) -> None:
@@ -376,7 +378,9 @@ class BrowserRoutingTests(unittest.IsolatedAsyncioTestCase):
                 )
 
             self.assertTrue(options.headless)
+            self.assertEqual(options.start_timeout, 60)
             self.assertIn("--headless=new", options.arguments)
+            self.assertIn("--disable-setuid-sandbox", options.arguments)
 
 
 if __name__ == "__main__":

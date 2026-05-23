@@ -256,7 +256,7 @@ def _build_browser_options(*, ChromiumOptions: Any, PageLoadState: Any, profile_
     with contextlib.suppress(Exception):
         options.binary_location = binary_location
     with contextlib.suppress(Exception):
-        options.start_timeout = 30
+        options.start_timeout = 60
     with contextlib.suppress(Exception):
         options.page_load_state = PageLoadState.INTERACTIVE
     with contextlib.suppress(Exception):
@@ -269,6 +269,7 @@ def _build_browser_options(*, ChromiumOptions: Any, PageLoadState: Any, profile_
         "--window-size=1920,1080",
         "--lang=en-US",
         "--no-sandbox",
+        "--disable-setuid-sandbox",
         "--disable-dev-shm-usage",
         "--disable-gpu",
         "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "

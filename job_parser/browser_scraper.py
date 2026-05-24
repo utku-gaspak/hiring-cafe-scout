@@ -9,6 +9,8 @@ import subprocess
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import urljoin
+from urllib.parse import urlparse
 
 from job_parser.config import SearchConfig
 from job_parser.filters import (
@@ -17,6 +19,7 @@ from job_parser.filters import (
     matches_seniority_configured,
 )
 from job_parser.models import Job
+from job_parser.payload import parse_job
 
 
 class CloudflareVerificationRequired(Exception):
@@ -217,7 +220,7 @@ async def _scrape_with_browser(
                 page_num += 1
                 continue
 
-            if not await _has_next_page(tab, page_num + 1):
+            if not page_data["has_next_page"]:
                 _write_progress(
                     config,
                     _build_progress_payload(
@@ -310,7 +313,7 @@ def _find_browser_binary() -> str | None:
     override = os.environ.get("CAFE_SCOUT_BROWSER_BINARY", "").strip()
     if override:
         path = Path(override).expanduser()
-        if path.is_file() and os.access(path, os.X_OK):
+        if _is_executable_file(path):
             return str(path)
 
     candidates = [
@@ -324,9 +327,15 @@ def _find_browser_binary() -> str | None:
     candidates.extend(_playwright_chromium_binaries())
 
     for candidate in candidates:
-        if candidate.is_file() and os.access(candidate, os.X_OK):
+        if _is_executable_file(candidate):
             return str(candidate)
     return None
+
+
+def _is_executable_file(path: Path) -> bool:
+    with contextlib.suppress(OSError):
+        return path.is_file() and os.access(path, os.X_OK)
+    return False
 
 
 def _playwright_chromium_binaries() -> list[Path]:
@@ -374,24 +383,20 @@ async def _browser_fetch_search_page(tab: Any, search_url: str, page_num: int) -
     total_count = _extract_total_job_count(body_text)
     card_blocks = await _extract_card_blocks(tab)
     ssr_hits = await _extract_ssr_hits(tab)
+    job_links = await _extract_job_links(tab)
+    has_next_page = await _has_next_page(tab, page_num + 1)
+    link_count = await _count_page_links(tab)
     if card_blocks:
         cards = [_parse_card_block(block["text"], block["url"]) for block in card_blocks]
         cards = [card for card in cards if card]
-        _attach_apply_urls(cards, ssr_hits)
     else:
         cards = []
-    if not cards:
-        job_links = _script_value(
-            await tab.execute_script(
-                """
-                return JSON.stringify(Array.from(document.querySelectorAll('a'))
-                  .filter(a => (a.innerText || '').trim() === 'Job Posting')
-                  .map(a => a.href));
-                """
-            )
-        )
+    fallback_cards_by_url = {str(card.get("url") or ""): card for card in cards}
+    if job_links:
+        cards = await _build_cards_from_job_links(tab, job_links, fallback_cards_by_url)
+    elif not cards:
         cards = _parse_job_cards(body_text, job_links)
-    link_count = await _count_page_links(tab)
+    _attach_ssr_hits(cards, ssr_hits)
     _debug(
         "page metrics: "
         f"current_url={current_url}, body_chars={len(body_text)}, "
@@ -405,6 +410,7 @@ async def _browser_fetch_search_page(tab: Any, search_url: str, page_num: int) -
         "current_url": current_url,
         "page_url": page_url,
         "page_link_count": link_count,
+        "has_next_page": has_next_page,
     }
 
 
@@ -583,6 +589,92 @@ async def _extract_card_blocks(tab: Any) -> list[dict[str, str]]:
     return []
 
 
+async def _extract_job_links(tab: Any) -> list[str]:
+    with contextlib.suppress(Exception):
+        links = _script_value(
+            await tab.execute_script(
+                """
+                return JSON.stringify(Array.from(document.querySelectorAll('a'))
+                  .filter(a => (a.innerText || '').trim() === 'Job Posting')
+                  .map(a => a.href));
+                """
+            )
+        )
+        if isinstance(links, list):
+            return _dedupe_job_links(str(link) for link in links)
+    return []
+
+
+def _dedupe_job_links(links: Any) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for raw_link in links:
+        link = str(raw_link or "").strip()
+        if not link:
+            continue
+        absolute_link = urljoin("https://hiring.cafe", link)
+        parsed = urlparse(absolute_link)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc.endswith("hiring.cafe"):
+            continue
+        if not parsed.path.startswith("/job/"):
+            continue
+        normalized = absolute_link.split("#", 1)[0]
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        deduped.append(normalized)
+    return deduped
+
+
+async def _build_cards_from_job_links(
+    tab: Any,
+    job_links: list[str],
+    fallback_cards_by_url: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    cards: list[dict[str, Any]] = []
+    for job_url in job_links:
+        card = dict(fallback_cards_by_url.get(job_url) or {})
+        card["url"] = job_url
+        card["object_id"] = job_url
+        hit = await _extract_job_detail_hit(tab, job_url)
+        if hit:
+            card["ssr_hit"] = hit
+            card["apply_url"] = _external_apply_url(hit.get("apply_url"), job_url)
+        cards.append(card)
+    return cards
+
+
+async def _extract_job_detail_hit(tab: Any, job_url: str, timeout_seconds: float = 8.0) -> dict[str, Any] | None:
+    with contextlib.suppress(Exception):
+        await tab.go_to(job_url)
+    if await _looks_like_challenge(tab):
+        raise CloudflareVerificationRequired()
+
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        with contextlib.suppress(Exception):
+            result = _script_value(
+                await tab.execute_script(
+                    """
+                    const nextDataEl = document.getElementById('__NEXT_DATA__');
+                    if (!nextDataEl) {
+                      return JSON.stringify(null);
+                    }
+                    try {
+                      const payload = JSON.parse(nextDataEl.textContent || '{}');
+                      return JSON.stringify(payload?.props?.pageProps?.job || null);
+                    } catch (error) {
+                      return JSON.stringify(null);
+                    }
+                    """
+                )
+            )
+            if isinstance(result, dict):
+                return result
+        await asyncio.sleep(0.25)
+    return None
+
+
 async def _extract_ssr_hits(tab: Any) -> list[dict[str, Any]]:
     script = """
     const nextDataEl = document.getElementById('__NEXT_DATA__');
@@ -701,14 +793,110 @@ def _parse_job_cards(body_text: str, job_links: list[str] | tuple[str, ...] | An
     return cards
 
 
-def _attach_apply_urls(cards: list[dict[str, str]], ssr_hits: list[dict[str, Any]]) -> None:
-    for card, hit in zip(cards, ssr_hits, strict=False):
-        apply_url = str(hit.get("apply_url") or "").strip()
-        if apply_url:
-            card["apply_url"] = apply_url
+def _attach_ssr_hits(cards: list[dict[str, Any]], ssr_hits: list[dict[str, Any]]) -> None:
+    used_hit_indexes: set[int] = set()
+    for card in cards:
+        if isinstance(card.get("ssr_hit"), dict):
+            continue
+        hit_index = _find_matching_ssr_hit(card, ssr_hits, used_hit_indexes)
+        if hit_index is None:
+            continue
+        hit = ssr_hits[hit_index]
+        used_hit_indexes.add(hit_index)
+        card["ssr_hit"] = hit
+        card["apply_url"] = _external_apply_url(hit.get("apply_url"), card.get("url"))
 
 
-def _parse_card_block(text: str, url: str) -> dict[str, str] | None:
+def _find_matching_ssr_hit(
+    card: dict[str, Any],
+    ssr_hits: list[dict[str, Any]],
+    used_hit_indexes: set[int],
+) -> int | None:
+    card_title = _normalize_match_text(card.get("title"))
+    card_company = _normalize_match_text(card.get("company"))
+    card_location = _normalize_match_text(card.get("location"))
+    if not card_title:
+        return None
+
+    title_matches = [
+        index
+        for index, hit in enumerate(ssr_hits)
+        if index not in used_hit_indexes
+        and _normalize_match_text(_hit_title(hit)) == card_title
+    ]
+    if not title_matches:
+        return None
+
+    if card_company:
+        company_matches = [
+            index
+            for index in title_matches
+            if _normalize_match_text(_hit_company(ssr_hits[index])) == card_company
+        ]
+        if len(company_matches) == 1:
+            return company_matches[0]
+
+    if card_location:
+        location_matches = [
+            index
+            for index in title_matches
+            if _normalize_match_text(_hit_location(ssr_hits[index])) == card_location
+        ]
+        if len(location_matches) == 1:
+            return location_matches[0]
+
+    if len(title_matches) == 1:
+        return title_matches[0]
+    return None
+
+
+def _hit_title(hit: dict[str, Any]) -> str:
+    processed = hit.get("v5_processed_job_data") or {}
+    job_information = hit.get("job_information") or {}
+    if not isinstance(processed, dict):
+        processed = {}
+    if not isinstance(job_information, dict):
+        job_information = {}
+    return str(processed.get("core_job_title") or job_information.get("title") or "")
+
+
+def _hit_company(hit: dict[str, Any]) -> str:
+    processed = hit.get("v5_processed_job_data") or {}
+    company_data = hit.get("enriched_company_data") or {}
+    if not isinstance(processed, dict):
+        processed = {}
+    if not isinstance(company_data, dict):
+        company_data = {}
+    return str(company_data.get("name") or processed.get("company_name") or "")
+
+
+def _hit_location(hit: dict[str, Any]) -> str:
+    processed = hit.get("v5_processed_job_data") or {}
+    if not isinstance(processed, dict):
+        return ""
+    return str(processed.get("formatted_workplace_location") or "")
+
+
+def _normalize_match_text(value: object) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", str(value or "").casefold()).strip()
+
+
+def _external_apply_url(value: object, job_url: object) -> str:
+    candidate = str(value or "").strip()
+    if not candidate:
+        return ""
+    parsed = urlparse(candidate)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return ""
+    job_host = urlparse(str(job_url or "")).netloc.casefold()
+    if job_host and parsed.netloc.casefold() == job_host:
+        return ""
+    if parsed.netloc.casefold().endswith("hiring.cafe"):
+        return ""
+    return candidate
+
+
+def _parse_card_block(text: str, url: str) -> dict[str, Any] | None:
     lines = [re.sub(r"\s+", " ", line).strip() for line in text.splitlines()]
     lines = [line for line in lines if line]
     card = _parse_block(lines)
@@ -764,7 +952,17 @@ def _parse_block(lines: list[str]) -> dict[str, str] | None:
     }
 
 
-def _build_job_from_card(card: dict[str, str]) -> Job:
+def _build_job_from_card(card: dict[str, Any]) -> Job:
+    card_url = str(card.get("url") or "")
+    ssr_hit = card.get("ssr_hit")
+    if isinstance(ssr_hit, dict) and card_url:
+        job = parse_job(ssr_hit, card_url)
+        job.object_id = card_url
+        job.source = "hiring.cafe"
+        job.url = card_url
+        job.apply_url = _external_apply_url(ssr_hit.get("apply_url"), card_url)
+        return job
+
     location = card.get("location") or "Unknown"
     location_parts = [part.strip() for part in location.split(",") if part.strip()]
     cities = [location_parts[0]] if location_parts else []

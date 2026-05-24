@@ -5,11 +5,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from job_parser.config import SearchConfig
-from job_parser.models import Job, sort_jobs
+from job_parser.models import Job
 
 
 def save_json(jobs: list[Job], config: SearchConfig) -> None:
-    sorted_jobs = sort_jobs(jobs)
     payload = {
         "scraped_at": datetime.now(timezone.utc).isoformat(),
         "filters": {
@@ -19,7 +18,7 @@ def save_json(jobs: list[Job], config: SearchConfig) -> None:
             "radius_city": config.radius_city,
             "max_pages": config.max_pages,
         },
-        "results": [job.to_dict() for job in sorted_jobs],
+        "results": [job.to_dict() for job in jobs],
     }
     output_path = Path(config.json_output)
     output_path.parent.mkdir(parents=True, exist_ok=True)

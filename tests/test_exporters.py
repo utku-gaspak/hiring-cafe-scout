@@ -38,6 +38,14 @@ def make_job() -> Job:
     )
 
 
+def make_job_with_id(object_id: str, posted_at: datetime) -> Job:
+    job = make_job()
+    job.object_id = object_id
+    job.url = f"https://hiring.cafe/job/{object_id}"
+    job.date_obj = posted_at
+    return job
+
+
 class ExporterTests(unittest.TestCase):
     def test_markdown_and_json_exports_use_normalized_job_model(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -74,6 +82,23 @@ class ExporterTests(unittest.TestCase):
 
             self.assertTrue((temp_path / "nested" / "manual" / "jobs.md").exists())
             self.assertTrue((temp_path / "nested" / "manual" / "jobs.json").exists())
+
+    def test_json_export_preserves_input_order(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            config = SearchConfig(json_output=str(temp_path / "jobs.json"))
+            jobs = [
+                make_job_with_id("first", datetime(2025, 5, 18, tzinfo=timezone.utc)),
+                make_job_with_id("second", datetime(2025, 5, 20, tzinfo=timezone.utc)),
+            ]
+
+            save_json(jobs, config)
+
+            json_payload = json.loads((temp_path / "jobs.json").read_text(encoding="utf-8"))
+            self.assertEqual(
+                [result["id"] for result in json_payload["results"]],
+                ["first", "second"],
+            )
 
 
 if __name__ == "__main__":

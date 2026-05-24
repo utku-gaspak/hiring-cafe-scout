@@ -9,7 +9,8 @@ from unittest import mock
 from job_parser.app import scrape
 from job_parser.browser_scraper import (
     CloudflareVerificationRequired,
-    _attach_apply_urls,
+    _attach_ssr_hits,
+    _build_job_from_card,
     _build_browser_options,
     _build_progress_payload,
     _build_search_state,
@@ -383,30 +384,104 @@ class BrowserRoutingTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("--headless=new", options.arguments)
             self.assertIn("--disable-setuid-sandbox", options.arguments)
 
-    def test_attach_apply_urls_keeps_job_urls_and_populates_apply_urls(self) -> None:
+    def test_attach_ssr_hits_matches_by_job_identity_not_position(self) -> None:
         cards = [
             {
                 "url": "https://hiring.cafe/job/abc123",
                 "apply_url": "",
                 "title": "Software Engineer",
+                "company": "Example Co",
             },
             {
                 "url": "https://hiring.cafe/job/def456",
                 "apply_url": "",
                 "title": "Platform Engineer",
+                "company": "Other Co",
             },
         ]
         ssr_hits = [
-            {"apply_url": "https://company.example/careers/apply/abc123"},
-            {"apply_url": ""},
+            {
+                "apply_url": "https://other.example/apply/def456",
+                "enriched_company_data": {"name": "Other Co"},
+                "v5_processed_job_data": {"core_job_title": "Platform Engineer"},
+            },
+            {
+                "apply_url": "https://company.example/careers/apply/abc123",
+                "enriched_company_data": {"name": "Example Co"},
+                "v5_processed_job_data": {"core_job_title": "Software Engineer"},
+            },
         ]
 
-        _attach_apply_urls(cards, ssr_hits)
+        _attach_ssr_hits(cards, ssr_hits)
 
         self.assertEqual(cards[0]["url"], "https://hiring.cafe/job/abc123")
         self.assertEqual(cards[0]["apply_url"], "https://company.example/careers/apply/abc123")
         self.assertEqual(cards[1]["url"], "https://hiring.cafe/job/def456")
+        self.assertEqual(cards[1]["apply_url"], "https://other.example/apply/def456")
+
+    def test_attach_ssr_hits_leaves_apply_url_empty_for_internal_or_missing_links(self) -> None:
+        cards = [
+            {
+                "url": "https://hiring.cafe/job/abc123",
+                "apply_url": "",
+                "title": "Software Engineer",
+                "company": "Example Co",
+            },
+            {
+                "url": "https://hiring.cafe/job/def456",
+                "apply_url": "",
+                "title": "Platform Engineer",
+                "company": "Other Co",
+            },
+        ]
+        ssr_hits = [
+            {
+                "apply_url": "https://hiring.cafe/job/abc123",
+                "enriched_company_data": {"name": "Example Co"},
+                "v5_processed_job_data": {"core_job_title": "Software Engineer"},
+            },
+            {
+                "enriched_company_data": {"name": "Other Co"},
+                "v5_processed_job_data": {"core_job_title": "Platform Engineer"},
+            },
+        ]
+
+        _attach_ssr_hits(cards, ssr_hits)
+
+        self.assertEqual(cards[0]["apply_url"], "")
         self.assertEqual(cards[1]["apply_url"], "")
+
+    def test_build_job_from_matched_ssr_hit_keeps_id_and_job_url_aligned(self) -> None:
+        card = {
+            "url": "https://hiring.cafe/job/abc123",
+            "title": "Wrong Fallback Title",
+            "company": "Wrong Fallback Company",
+            "ssr_hit": {
+                "source": "recruitee",
+                "apply_url": "https://company.example/careers/apply/abc123",
+                "job_information": {"title": "Software Engineer .NET"},
+                "enriched_company_data": {"name": "Example Co"},
+                "v5_processed_job_data": {
+                    "core_job_title": "Software Engineer .NET",
+                    "company_name": "Example Co",
+                    "formatted_workplace_location": "Berlin, Germany",
+                    "workplace_type": "Hybrid",
+                    "commitment": ["Full Time"],
+                    "technical_tools": ["C#", ".NET"],
+                    "requirements_summary": "Build .NET services",
+                    "seniority_level": "Mid Level",
+                },
+            },
+        }
+
+        job = _build_job_from_card(card)
+        payload = job.to_dict()
+
+        self.assertEqual(payload["id"], "https://hiring.cafe/job/abc123")
+        self.assertEqual(payload["job_url"], "https://hiring.cafe/job/abc123")
+        self.assertEqual(payload["title"], "Software Engineer .NET")
+        self.assertEqual(payload["company"], "Example Co")
+        self.assertEqual(payload["apply_url"], "https://company.example/careers/apply/abc123")
 
 
 if __name__ == "__main__":

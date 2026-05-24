@@ -9,6 +9,7 @@ from unittest import mock
 from job_parser.app import scrape
 from job_parser.browser_scraper import (
     CloudflareVerificationRequired,
+    _attach_apply_urls,
     _build_browser_options,
     _build_progress_payload,
     _build_search_state,
@@ -381,6 +382,31 @@ class BrowserRoutingTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(options.start_timeout, 60)
             self.assertIn("--headless=new", options.arguments)
             self.assertIn("--disable-setuid-sandbox", options.arguments)
+
+    def test_attach_apply_urls_keeps_job_urls_and_populates_apply_urls(self) -> None:
+        cards = [
+            {
+                "url": "https://hiring.cafe/job/abc123",
+                "apply_url": "",
+                "title": "Software Engineer",
+            },
+            {
+                "url": "https://hiring.cafe/job/def456",
+                "apply_url": "",
+                "title": "Platform Engineer",
+            },
+        ]
+        ssr_hits = [
+            {"apply_url": "https://company.example/careers/apply/abc123"},
+            {"apply_url": ""},
+        ]
+
+        _attach_apply_urls(cards, ssr_hits)
+
+        self.assertEqual(cards[0]["url"], "https://hiring.cafe/job/abc123")
+        self.assertEqual(cards[0]["apply_url"], "https://company.example/careers/apply/abc123")
+        self.assertEqual(cards[1]["url"], "https://hiring.cafe/job/def456")
+        self.assertEqual(cards[1]["apply_url"], "")
 
 
 if __name__ == "__main__":

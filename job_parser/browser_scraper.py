@@ -94,9 +94,12 @@ async def _scrape_with_browser(
     # Pydoll defaults to stdout=PIPE/stderr=PIPE; in Docker, Chrome's output
     # fills the 64 KB pipe buffer and blocks, preventing the debug HTTP server
     # from ever responding. Redirect to DEVNULL to avoid this deadlock.
-    browser._browser_process_manager._process_creator = lambda cmd: subprocess.Popen(
-        cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-    )
+    process_manager = getattr(browser, "_browser_process_manager", None)
+    if process_manager is not None:
+        with contextlib.suppress(Exception):
+            process_manager._process_creator = lambda cmd: subprocess.Popen(
+                cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
     try:
         try:
             tab = await browser.start()
@@ -251,6 +254,8 @@ async def _close_browser_safely(browser: Any) -> None:
 def _build_browser_options(*, ChromiumOptions: Any, PageLoadState: Any, profile_dir: str | None) -> Any:
     options = ChromiumOptions()
     headless = _env_enabled("CAFE_SCOUT_HEADLESS")
+    with contextlib.suppress(Exception):
+        options.headless = headless
     binary_location = _find_browser_binary()
     if not binary_location:
         raise SystemExit(
@@ -368,9 +373,11 @@ async def _browser_fetch_search_page(tab: Any, search_url: str, page_num: int) -
     current_url = await _read_current_url(tab)
     total_count = _extract_total_job_count(body_text)
     card_blocks = await _extract_card_blocks(tab)
+    ssr_hits = await _extract_ssr_hits(tab)
     if card_blocks:
         cards = [_parse_card_block(block["text"], block["url"]) for block in card_blocks]
         cards = [card for card in cards if card]
+        _attach_apply_urls(cards, ssr_hits)
     else:
         cards = []
     if not cards:
@@ -576,6 +583,26 @@ async def _extract_card_blocks(tab: Any) -> list[dict[str, str]]:
     return []
 
 
+async def _extract_ssr_hits(tab: Any) -> list[dict[str, Any]]:
+    script = """
+    const nextDataEl = document.getElementById('__NEXT_DATA__');
+    if (!nextDataEl) {
+      return JSON.stringify([]);
+    }
+    try {
+      const payload = JSON.parse(nextDataEl.textContent || '{}');
+      return JSON.stringify(payload?.props?.pageProps?.ssrHits || []);
+    } catch (error) {
+      return JSON.stringify([]);
+    }
+    """
+    with contextlib.suppress(Exception):
+        result = _script_value(await tab.execute_script(script))
+        if isinstance(result, list):
+            return [item for item in result if isinstance(item, dict)]
+    return []
+
+
 async def _has_next_page(tab: Any, next_page_num: int) -> bool:
     page_links = _script_value(
         await tab.execute_script(
@@ -674,6 +701,13 @@ def _parse_job_cards(body_text: str, job_links: list[str] | tuple[str, ...] | An
     return cards
 
 
+def _attach_apply_urls(cards: list[dict[str, str]], ssr_hits: list[dict[str, Any]]) -> None:
+    for card, hit in zip(cards, ssr_hits, strict=False):
+        apply_url = str(hit.get("apply_url") or "").strip()
+        if apply_url:
+            card["apply_url"] = apply_url
+
+
 def _parse_card_block(text: str, url: str) -> dict[str, str] | None:
     lines = [re.sub(r"\s+", " ", line).strip() for line in text.splitlines()]
     lines = [line for line in lines if line]
@@ -759,7 +793,7 @@ def _build_job_from_card(card: dict[str, str]) -> Job:
         seniority_level=seniority_level,
         posted_str="Unknown",
         url=card.get("url") or "",
-        apply_url="",
+        apply_url=card.get("apply_url") or "",
     )
 
 
